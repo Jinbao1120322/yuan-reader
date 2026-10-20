@@ -51,33 +51,66 @@ export function BookshelfScreen() {
     }
   };
 
+  const openDetail = (b: ShelfBook) =>
+    navigation.navigate('BookDetail', {
+      bookUrl: b.bookUrl,
+      sourceId: b.sourceId,
+      name: b.name,
+      author: b.author,
+      coverUrl: b.coverUrl,
+      intro: b.intro,
+      lastChapter: b.lastChapter,
+      chapterIndex: b.lastChapterIndex,
+      pageIndex: b.lastReadPos,
+    });
+
+  const openReader = (b: ShelfBook) =>
+    navigation.navigate('Reader', {
+      bookUrl: b.bookUrl,
+      sourceId: b.sourceId,
+      name: b.name,
+      author: b.author,
+      chapterIndex: b.lastChapterIndex,
+      pageIndex: b.lastReadPos,
+    });
+
+  // 删除/管理等操作入口：卡片右侧「⋮」+ 长按，两条路都能到
+  const askRemove = (b: ShelfBook) => {
+    Alert.alert(
+      '移出书架',
+      `确定把《${b.name}》移出书架？\n\n只是从书架移除，书源和本地文件都不会被删除，随时能再搜回来。`,
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '移出书架',
+          style: 'destructive',
+          onPress: () => removeFromShelf(b.bookUrl, b.sourceId),
+        },
+      ]
+    );
+  };
+
   const onLongPress = (b: ShelfBook) => {
-    Alert.alert('移除书架', `确定把《${b.name}》移出书架？`, [
+    Alert.alert(b.name, b.author || '', [
+      { text: '继续阅读', onPress: () => openReader(b) },
+      { text: '移出书架', style: 'destructive', onPress: () => askRemove(b) },
       { text: '取消', style: 'cancel' },
-      {
-        text: '移除',
-        style: 'destructive',
-        onPress: () => removeFromShelf(b.bookUrl, b.sourceId),
-      },
+    ]);
+  };
+
+  const onMore = (b: ShelfBook) => {
+    Alert.alert(b.name, '要做什么？', [
+      { text: '继续阅读', onPress: () => openReader(b) },
+      { text: '书籍详情', onPress: () => openDetail(b) },
+      { text: '移出书架', style: 'destructive', onPress: () => askRemove(b) },
+      { text: '取消', style: 'cancel' },
     ]);
   };
 
   const renderItem = ({ item }: { item: ShelfBook }) => (
     <TouchableOpacity
       style={styles.item}
-      onPress={() =>
-        navigation.navigate('BookDetail', {
-          bookUrl: item.bookUrl,
-          sourceId: item.sourceId,
-          name: item.name,
-          author: item.author,
-          coverUrl: item.coverUrl,
-          intro: item.intro,
-          lastChapter: item.lastChapter,
-          chapterIndex: item.lastChapterIndex,
-          pageIndex: item.lastReadPos,
-        })
-      }
+      onPress={() => openDetail(item)}
       onLongPress={() => onLongPress(item)}
     >
       <BookCover uri={item.coverUrl} name={item.name} />
@@ -92,6 +125,13 @@ export function BookshelfScreen() {
           {item.lastChapter}
         </Text>
       </View>
+      <TouchableOpacity
+        style={styles.more}
+        onPress={() => onMore(item)}
+        hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+      >
+        <Text style={styles.moreText}>⋮</Text>
+      </TouchableOpacity>
     </TouchableOpacity>
   );
 
@@ -164,6 +204,13 @@ const styles = StyleSheet.create({
     borderColor: APP.border,
   },
   meta: { flex: 1, marginLeft: 12, justifyContent: 'center' },
+  more: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingLeft: 12,
+    paddingRight: 2,
+  },
+  moreText: { color: APP.sub, fontSize: 22, lineHeight: 24, fontWeight: '700' },
   name: { color: APP.text, fontSize: 17, fontWeight: '700' },
   author: { color: APP.sub, fontSize: 13, marginTop: 4 },
   progress: { color: APP.sub, fontSize: 12, marginTop: 8 },

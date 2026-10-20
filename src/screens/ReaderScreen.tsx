@@ -9,9 +9,9 @@ import {
   Modal,
   FlatList,
   Alert,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useStore } from '../store/useStore';
 import { getBookInfo, getContent, getToc } from '../engine/SourceEngine';
@@ -129,6 +129,37 @@ export function ReaderScreen() {
   const [tocOpen, setTocOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+
+  // 顶/底工具栏显隐。点屏幕中间切换，方便沉浸阅读。
+  // 用透明度而不是条件渲染：工具栏仍然占位，分页不会因为显隐而重排跳页。
+  const [barsVisible, setBarsVisible] = useState(true);
+  const barsOpacity = useRef(new Animated.Value(1)).current;
+  const toggleBars = () => {
+    const next = !barsVisible;
+    setBarsVisible(next);
+    Animated.timing(barsOpacity, {
+      toValue: next ? 1 : 0,
+      duration: 160,
+      useNativeDriver: true,
+    }).start();
+  };
+  // 滚动模式没有分页手势，靠自己判定「轻点」：位移 < 12pt 且时长 < 350ms
+  const touchRef = useRef({ x: 0, y: 0, t: 0 });
+  const onTouchStart = (e: any) => {
+    const n = e.nativeEvent;
+    touchRef.current = { x: n.pageX, y: n.pageY, t: Date.now() };
+  };
+  const onTouchEnd = (e: any) => {
+    const n = e.nativeEvent;
+    const d = touchRef.current;
+    if (
+      Date.now() - d.t < 350 &&
+      Math.abs(n.pageX - d.x) < 12 &&
+      Math.abs(n.pageY - d.y) < 12
+    ) {
+      toggleBars();
+    }
+  };
 
   // 分页翻页相关
   // 初始页：分页模式直接用保存的页号；滚动模式由下方 scroll 恢复逻辑处理（百分比）
@@ -307,19 +338,25 @@ export function ReaderScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
-      <TopBar
-        title={curChapter?.name || name}
-        onBack={() => navigation.goBack()}
-        backgroundColor={theme.bg}
-        darkText={settings.theme !== 'night'}
-      />
+      <Animated.View
+        style={{ opacity: barsOpacity }}
+        pointerEvents={barsVisible ? 'auto' : 'none'}
+      >
+        <TopBar
+          title={curChapter?.name || name}
+          onBack={() => navigation.goBack()}
+          backgroundColor={theme.bg}
+          textColor={theme.text}
+          darkText={settings.theme !== 'night'}
+        />
+      </Animated.View>
 
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={theme.sub} />
         </View>
       ) : isPaged ? (
-        <GestureHandlerRootView style={{ flex: 1 }}>
+        <View style={{ flex: 1 }}>
           <SafeAreaView
             style={{ flex: 1 }}
             edges={['left', 'right', 'bottom']}
@@ -348,7 +385,7 @@ export function ReaderScreen() {
                 areaH={area.h}
                 onTapLeft={handlePrev}
                 onTapRight={handleNext}
-                onTapCenter={() => setMenuOpen(true)}
+                onTapCenter={toggleBars}
               />
             ) : (
               <View style={styles.center}>
@@ -356,51 +393,68 @@ export function ReaderScreen() {
               </View>
             )}
           </SafeAreaView>
-        </GestureHandlerRootView>
+        </View>
       ) : (
-        <ScrollView
-          ref={scrollRef}
-          style={styles.scroll}
-          contentContainerStyle={styles.content}
-          onContentSizeChange={(_, h) => setScrollContentH(h)}
-          onLayout={(e) => setScrollViewH(e.nativeEvent.layout.height)}
-          onMomentumScrollEnd={(e) => {
-            const y = e.nativeEvent.contentOffset.y;
-            const h = e.nativeEvent.contentSize.height;
-            const pos = Math.round((y / Math.max(h, 1)) * 1000);
-            updateProgress(bookUrl, sourceId, index, pos);
-          }}
+        <View
+          style={{ flex: 1 }}
+          onTouchStart={onTouchStart}
+          onTouchEnd={onTouchEnd}
         >
-          <Text
-            style={[
-              styles.text,
-              {
-                color: theme.text,
-                fontSize: settings.fontSize,
-                lineHeight: settings.fontSize * settings.lineHeight,
-              },
-            ]}
+          <ScrollView
+            ref={scrollRef}
+            style={styles.scroll}
+            contentContainerStyle={styles.content}
+            onContentSizeChange={(_, h) => setScrollContentH(h)}
+            onLayout={(e) => setScrollViewH(e.nativeEvent.layout.height)}
+            onMomentumScrollEnd={(e) => {
+              const y = e.nativeEvent.contentOffset.y;
+              const h = e.nativeEvent.contentSize.height;
+              const pos = Math.round((y / Math.max(h, 1)) * 1000);
+              updateProgress(bookUrl, sourceId, index, pos);
+            }}
           >
-            {content}
-          </Text>
-        </ScrollView>
+            <Text
+              style={[
+                styles.text,
+                {
+                  color: theme.text,
+                  fontSize: settings.fontSize,
+                  lineHeight: settings.fontSize * settings.lineHeight,
+                },
+              ]}
+            >
+              {content}
+            </Text>
+          </ScrollView>
+        </View>
       )}
 
       {/* 底部工具栏 */}
-      <View style={[styles.bottom, { backgroundColor: theme.barBg }]}>
-        <TouchableOpacity style={styles.bBtn} onPress={handlePrev}>
-          <Text style={[styles.bText, { color: theme.barText }]}>上一页</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.bBtn} onPress={() => setTocOpen(true)}>
-          <Text style={[styles.bText, { color: theme.barText }]}>目录</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.bBtn} onPress={() => setMenuOpen(true)}>
-          <Text style={[styles.bText, { color: theme.barText }]}>设置</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.bBtn} onPress={handleNext}>
-          <Text style={[styles.bText, { color: theme.barText }]}>下一页</Text>
-        </TouchableOpacity>
-      </View>
+      <Animated.View
+        style={{ opacity: barsOpacity }}
+        pointerEvents={barsVisible ? 'auto' : 'none'}
+      >
+        <SafeAreaView edges={['bottom']} style={{ backgroundColor: theme.barBg }}>
+          <View style={[styles.bottom, { backgroundColor: theme.barBg }]}>
+            <TouchableOpacity style={styles.bBtn} onPress={handlePrev}>
+              <Text style={[styles.bText, { color: theme.barText }]}>
+                {isPaged ? '上一页' : '上一章'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.bBtn} onPress={() => setTocOpen(true)}>
+              <Text style={[styles.bText, { color: theme.barText }]}>目录</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.bBtn} onPress={() => setMenuOpen(true)}>
+              <Text style={[styles.bText, { color: theme.barText }]}>设置</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.bBtn} onPress={handleNext}>
+              <Text style={[styles.bText, { color: theme.barText }]}>
+                {isPaged ? '下一页' : '下一章'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Animated.View>
 
       {/* 目录抽屉 */}
       <Modal visible={tocOpen} transparent animationType="slide">

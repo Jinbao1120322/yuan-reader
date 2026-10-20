@@ -16,6 +16,8 @@ interface Props {
   right?: React.ReactNode;
   backgroundColor?: string;
   darkText?: boolean; // 浅色背景（如阅读器日间/羊皮纸/护眼主题）时用深色状态栏文字
+  // 标题/返回的文字色。浅色主题下必须显式传深色，否则默认的近白色会糊在浅底上看不清
+  textColor?: string;
 }
 
 // 顶部栏：标题一律左对齐，避开灵动岛中央禁区；顶部用 SafeArea 留出刘海/岛空间
@@ -25,6 +27,7 @@ export function TopBar({
   right,
   backgroundColor,
   darkText,
+  textColor,
 }: Props) {
   return (
     <SafeAreaView
@@ -38,12 +41,17 @@ export function TopBar({
       <View style={styles.row}>
         {onBack ? (
           <TouchableOpacity style={styles.back} onPress={onBack}>
-            <Text style={styles.backText}>‹ 返回</Text>
+            <Text style={[styles.backText, textColor ? { color: textColor } : null]}>
+              ‹ 返回
+            </Text>
           </TouchableOpacity>
         ) : (
           <View style={styles.back} />
         )}
-        <Text style={styles.title} numberOfLines={1}>
+        <Text
+          style={[styles.title, textColor ? { color: textColor } : null]}
+          numberOfLines={1}
+        >
           {title}
         </Text>
         <View style={styles.right}>{right}</View>
