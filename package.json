@@ -1,0 +1,39 @@
+{
+  "name": "yuan-reader",
+  "version": "1.0.0",
+  "description": "源阅读 - 一个兼容 Legado 书源规则的 iOS 书源阅读器 (Expo + React Native)",
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "@react-navigation/bottom-tabs": "^7.2.0",
+    "@react-navigation/native": "^7.0.14",
+    "@react-navigation/stack": "^7.1.1",
+    "@xmldom/xmldom": "^0.8.10",
+    "cheerio": "^1.0.0",
+    "expo": "~53.0.9",
+    "expo-document-picker": "~13.0.3",
+    "iconv-lite": "^0.6.3",
+    "expo-status-bar": "~2.2.3",
+    "react": "19.0.0",
+    "react-native": "0.79.2",
+    "react-native-gesture-handler": "~2.24.0",
+    "react-native-reanimated": "~3.17.0",
+    "react-native-safe-area-context": "5.4.0",
+    "react-native-screens": "~4.10.0",
+    "xpath": "^0.0.33",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@types/react": "~19.0.0",
+    "typescript": "^5.7.0"
+  },
+  "private": true
+}

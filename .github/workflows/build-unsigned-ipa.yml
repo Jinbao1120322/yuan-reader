@@ -1,0 +1,63 @@
+name: Build Unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build-ipa:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Read version from app.json
+        id: ver
+        run: |
+          VER=$(node -e "console.log(require('./app.json').expo.version)")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Expo prebuild (generate iOS native project + pods)
+        env:
+          CI: '1'
+          EXPO_NO_TELEMETRY: '1'
+        run: npx expo prebuild --platform ios
+
+      - name: Build unsigned archive
+        run: |
+          cd ios
+          WS=$(ls *.xcworkspace | head -n1)
+          SCHEME=$(basename "$WS" .xcworkspace)
+          xcodebuild \
+            -workspace "$WS" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -archivePath build/App.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            archive
+
+      - name: Package unsigned IPA
+        run: |
+          cd ios
+          mkdir -p Payload
+          cp -r build/App.xcarchive/Products/Applications/*.app Payload/
+          cd ..
+          zip -r "yuan-reader-v${{ steps.ver.outputs.version }}.ipa" Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yuan-reader-unsigned-v${{ steps.ver.outputs.version }}
+          path: yuan-reader-v${{ steps.ver.outputs.version }}.ipa
