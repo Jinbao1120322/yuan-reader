@@ -76,10 +76,51 @@ export function buildSearchUrl(
   });
 }
 
+// 相对地址 → 绝对地址。
+//
+// 不用 new URL(url, base)：React Native 自带的 URL 是精简实现，
+// 第二参数（base）并不可靠，`new URL('/book/1', 'https://a.com')` 会直接抛错，
+// 于是书源里所有相对链接（绝大多数都是相对路径）都会解析失败。
+// 这里手写一套，行为与浏览器的 URL 解析对齐。
 export function resolveUrl(url: string, base: string): string {
-  try {
-    return new URL(url, base).toString();
-  } catch {
-    return url;
+  const u = (url || '').trim();
+  if (!u) return (base || '').trim();
+
+  // 已是绝对地址（http:, https:, data:, ftp: …）
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(u)) return u;
+
+  const b = (base || '').trim();
+  if (!b) return u;
+
+  // 协议相对：//cdn.xx.com/a.jpg
+  if (u.startsWith('//')) {
+    const m = b.match(/^([a-zA-Z][a-zA-Z0-9+.-]*:)/);
+    return (m ? m[1] : 'https:') + u;
   }
+
+  const mBase = b.match(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/?#]+)([^?#]*)/);
+  if (!mBase) return u;
+  const origin = mBase[1];
+  const basePath = mBase[2] || '/';
+
+  if (u.startsWith('#')) return b.split('#')[0] + u;
+  if (u.startsWith('?')) return origin + basePath + u;
+  if (u.startsWith('/')) return origin + u;
+
+  // 普通相对路径：以 base 所在目录为基准，处理 ./ 和 ../
+  const dir = basePath.replace(/[^/]*$/, '');
+  const cut = u.search(/[?#]/);
+  const pathPart = cut === -1 ? u : u.slice(0, cut);
+  const suffix = cut === -1 ? '' : u.slice(cut);
+  const segs = (dir + pathPart).split('/');
+  const out: string[] = [];
+  for (const s of segs) {
+    if (s === '.' || s === '') continue;
+    if (s === '..') {
+      if (out.length > 1) out.pop();
+      continue;
+    }
+    out.push(s);
+  }
+  return origin + '/' + out.join('/') + suffix;
 }

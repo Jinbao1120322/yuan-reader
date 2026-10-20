@@ -36,7 +36,10 @@ jobs:
         id: ver
         run: |
           VER=$(node -e "console.log(require('./app.json').expo.version)")
+          BUILD=$(node -e "console.log(require('./app.json').expo.ios.buildNumber)")
           echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "stamp=$VER.$BUILD" >> "$GITHUB_OUTPUT"
+          echo "版本 $VER build $BUILD，版本戳 $VER.$BUILD"
 
       - name: Expo prebuild (generate iOS native project + pods)
         env:
@@ -131,10 +134,10 @@ jobs:
           BUNDLE=$(find ios/build/App.xcarchive/Products/Applications -maxdepth 2 -name 'main.jsbundle' | head -n1)
           echo "bundle: $BUNDLE"
           if [ -z "$BUNDLE" ]; then echo "ERROR: main.jsbundle 不存在"; exit 1; fi
-          if grep -aq '1.0.7.8' "$BUNDLE"; then
-            echo "OK: bundle 含版本戳 1.0.7.8"
+          if grep -aq '${{ steps.ver.outputs.stamp }}' "$BUNDLE"; then
+            echo "OK: bundle 含版本戳 ${{ steps.ver.outputs.stamp }}"
           else
-            echo "ERROR: bundle 不含版本戳 1.0.7.8 —— 打包用的是旧 index.js"
+            echo "ERROR: bundle 不含版本戳 ${{ steps.ver.outputs.stamp }} —— 打包用的是旧 index.js"
             exit 1
           fi
 

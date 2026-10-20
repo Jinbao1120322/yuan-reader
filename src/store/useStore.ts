@@ -41,11 +41,16 @@ interface State {
   sources: BookSource[];
   shelf: ShelfBook[];
   settings: Settings;
+  // 各书源历史命中次数：搜索时用来把「活着、能出结果」的源排到队首，
+  // 用户不用先等几百个死站跑完才看到第一批结果
+  sourceHits: Record<string, number>;
   // 书源
   addSource: (s: BookSource) => void;
   removeSource: (id: string) => void;
   toggleSource: (id: string) => void;
+  setAllSourcesEnabled: (enabled: boolean) => void;
   importSources: (list: BookSource[]) => number;
+  bumpSourceHits: (ids: string[]) => void;
   // 书架
   addToShelf: (b: ShelfBook) => void;
   removeFromShelf: (bookUrl: string, sourceId: string) => void;
@@ -83,6 +88,7 @@ export const useStore = create<State>()(
       sources: [],
       shelf: [],
       settings: defaultSettings,
+      sourceHits: {},
 
       addSource: (s) =>
         set((st) => {
@@ -100,6 +106,14 @@ export const useStore = create<State>()(
           ),
         })),
 
+      // 一键全开 / 全关。一次 set 完成，避免逐个 toggle 触发 N 次持久化。
+      setAllSourcesEnabled: (enabled) =>
+        set((st) => ({
+          sources: st.sources.map((x) =>
+            x._enabled === enabled ? x : { ...x, _enabled: enabled }
+          ),
+        })),
+
       importSources: (list) => {
         let added = 0;
         const map = new Map(get().sources.map((s) => [s.bookSourceUrl, s]));
@@ -113,6 +127,17 @@ export const useStore = create<State>()(
         set({ sources: Array.from(map.values()) });
         return added;
       },
+
+      bumpSourceHits: (ids) =>
+        set((st) => {
+          if (!ids.length) return {};
+          const next = { ...st.sourceHits };
+          for (const id of ids) {
+            // 封顶，避免老站永远压在新站前面
+            next[id] = Math.min(999, (next[id] || 0) + 1);
+          }
+          return { sourceHits: next };
+        }),
 
       addToShelf: (b) =>
         set((st) => {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
   Platform,
   Pressable,
   InputAccessoryView,
+  Switch,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useStore } from '../store/useStore';
@@ -22,9 +23,12 @@ import { SAMPLE_SOURCE } from '../sources/sampleSource';
 import { APP } from '../theme/theme';
 import { TopBar } from '../components/TopBar';
 import { readLocalText } from '../utils/localBook';
+import { parseSourceText } from '../utils/parseSources';
 
 // iOS 键盘上方那条「完成」工具条的 id
 const KEYBOARD_DONE_ID = 'sources-import-done';
+
+type FilterKey = 'all' | 'on' | 'off';
 
 export function SourcesScreen() {
   const sources = useStore((s) => s.sources);
@@ -32,13 +36,50 @@ export function SourcesScreen() {
   const removeSource = useStore((s) => s.removeSource);
   const importSources = useStore((s) => s.importSources);
   const addSource = useStore((s) => s.addSource);
+  const setAllSourcesEnabled = useStore((s) => s.setAllSourcesEnabled);
 
   const [modal, setModal] = useState(false);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState<FilterKey>('all');
 
-  const enabledCount = sources.filter((s) => s._enabled).length;
+  const enabledCount = useMemo(
+    () => sources.reduce((n, s) => (s._enabled ? n + 1 : n), 0),
+    [sources]
+  );
+  const offCount = sources.length - enabledCount;
 
+  const shown = useMemo(() => {
+    if (filter === 'on') return sources.filter((s) => s._enabled);
+    if (filter === 'off') return sources.filter((s) => !s._enabled);
+    return sources;
+  }, [sources, filter]);
+
+  const enableAll = () => {
+    if (sources.length === 0 || enabledCount === sources.length) return;
+    Alert.alert(
+      '启用全部书源',
+      `将启用 ${sources.length} 个书源。\n\n启用越多，搜索时要发的网络请求就越多，会明显变慢。建议只留十几个常用的。`,
+      [
+        { text: '取消', style: 'cancel' },
+        { text: '仍然全部启用', onPress: () => setAllSourcesEnabled(true) },
+      ]
+    );
+  };
+
+  const disableAll = () => {
+    if (enabledCount === 0) return;
+    Alert.alert(
+      '停用全部书源',
+      `将停用当前 ${enabledCount} 个书源。停用只是不参与搜索/换源，书源本身不会删除，随时可以再启用。`,
+      [
+        { text: '取消', style: 'cancel' },
+        { text: '确定停用', style: 'destructive', onPress: () => setAllSourcesEnabled(false) },
+      ]
+    );
+  };
+
+  // 统一走 parseSourceText：标准 JSON、二次转义、每行一条、夹着杂字都能认
   const doImport = async (raw: string, fromUrl = false) => {
     setLoading(true);
     try {
@@ -46,15 +87,20 @@ export function SourcesScreen() {
       if (fromUrl) {
         if (!/^https?:\/\//.test(content)) throw new Error('请输入合法的 http(s) 链接');
         const resp = await fetch(content);
+        if (!resp.ok) throw new Error(`下载失败 HTTP ${resp.status}`);
         content = await resp.text();
       }
-      const parsed = JSON.parse(content);
-      const list: BookSource[] = Array.isArray(parsed) ? parsed : [parsed];
+      const { list, mode } = parseSourceText(content);
+      const invalid = list.filter((s) => !s.bookSourceUrl).length;
       const added = importSources(list);
-      Alert.alert('导入完成', `新增 ${added} 个书源（已存在的自动跳过）`);
       Keyboard.dismiss();
       setModal(false);
       setText('');
+      Alert.alert(
+        '导入完成',
+        `识别为 ${mode}\n新增 ${added} 个书源（已存在的自动跳过）` +
+          (invalid ? `\n其中 ${invalid} 个缺书源地址，已忽略` : '')
+      );
     } catch (e: any) {
       Alert.alert('解析失败', e?.message || '不是合法的 JSON 书源');
     } finally {
@@ -77,7 +123,7 @@ export function SourcesScreen() {
   const pickFromFile = async () => {
     try {
       const res = await DocumentPicker.getDocumentAsync({
-        type: ['application/json', 'text/plain'],
+        type: ['application/json', 'text/plain', 'public.data'],
         copyToCacheDirectory: true,
         multiple: true,
       });
@@ -86,11 +132,12 @@ export function SourcesScreen() {
       setLoading(true);
       let total = 0;
       const fails: string[] = [];
+      const modes: string[] = [];
       for (const asset of res.assets) {
         try {
           const raw = await readLocalText(asset.uri);
-          const parsed = JSON.parse(raw);
-          const list: BookSource[] = Array.isArray(parsed) ? parsed : [parsed];
+          const { list, mode } = parseSourceText(raw);
+          modes.push(mode);
           total += importSources(list);
         } catch (e: any) {
           fails.push(`${asset.name}：${e?.message || '不是合法的 JSON'}`);
@@ -105,6 +152,7 @@ export function SourcesScreen() {
       Alert.alert(
         total > 0 ? '导入完成' : '没能导入',
         `新增 ${total} 个书源（已存在的自动跳过）` +
+          (modes.length ? `\n识别方式：${Array.from(new Set(modes)).join('、')}` : '') +
           (fails.length ? `\n\n失败 ${fails.length} 个：\n${fails.join('\n')}` : '')
       );
     } catch (e: any) {
@@ -123,12 +171,14 @@ export function SourcesScreen() {
           {item.bookSourceGroup || '未分组'} · {item.bookSourceUrl}
         </Text>
       </View>
-      <TouchableOpacity
-        style={[styles.toggle, item._enabled ? styles.on : styles.off]}
-        onPress={() => toggleSource(item._id!)}
-      >
-        <Text style={styles.toggleText}>{item._enabled ? '启用' : '停用'}</Text>
-      </TouchableOpacity>
+      <Switch
+        value={!!item._enabled}
+        onValueChange={() => toggleSource(item._id!)}
+        trackColor={{ false: APP.card2, true: APP.accent }}
+        thumbColor="#fff"
+        ios_backgroundColor={APP.card2}
+        style={styles.switch}
+      />
       <TouchableOpacity
         style={styles.del}
         onPress={() =>
@@ -147,40 +197,75 @@ export function SourcesScreen() {
     <View style={styles.container}>
       {/* 顶部栏负责吃 top inset，否则内容会画到状态栏/灵动岛下面 */}
       <TopBar title="书源" />
-      <View style={styles.summary}>
-        <Text style={styles.summaryText}>
-          共 {sources.length} 个 · 启用 {enabledCount} 个
+
+      <View style={styles.head}>
+        <Text style={styles.stat} numberOfLines={1}>
+          共 {sources.length} 个 · 已启用 {enabledCount} 个
         </Text>
-        <View style={styles.btns}>
-          <TouchableOpacity style={styles.btn} onPress={() => setModal(true)}>
-            <Text style={styles.btnText}>导入</Text>
+        <View style={styles.headBtns}>
+          <TouchableOpacity style={styles.miniBtn} onPress={enableAll}>
+            <Text style={styles.miniText}>全开</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.btn} onPress={addSample}>
-            <Text style={styles.btnText}>示例源</Text>
+          <TouchableOpacity style={styles.miniBtn} onPress={disableAll}>
+            <Text style={styles.miniText}>全关</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.miniPrimary} onPress={() => setModal(true)}>
+            <Text style={styles.miniPrimaryText}>导入</Text>
           </TouchableOpacity>
         </View>
       </View>
+
+      <View style={styles.filterRow}>
+        {(
+          [
+            ['all', `全部 ${sources.length}`],
+            ['on', `已启用 ${enabledCount}`],
+            ['off', `已停用 ${offCount}`],
+          ] as [FilterKey, string][]
+        ).map(([k, label]) => (
+          <TouchableOpacity
+            key={k}
+            style={[styles.chip, filter === k && styles.chipOn]}
+            onPress={() => setFilter(k)}
+          >
+            <Text style={[styles.chipText, filter === k && styles.chipTextOn]}>{label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <Text style={styles.note}>
+        开关打开（已启用）的书源才会参与搜索和换源；关掉只是暂时不用，不会删除。
+      </Text>
+
       <FlatList
-        data={sources}
+        data={shown}
         keyExtractor={(i) => i._id!}
         renderItem={renderItem}
         contentContainerStyle={styles.list}
+        initialNumToRender={12}
+        maxToRenderPerBatch={16}
+        windowSize={8}
+        removeClippedSubviews
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>还没有书源</Text>
-            <Text style={styles.emptySub}>
-              点「导入」可以粘贴 JSON、粘链接，或从「文件」里选 .json
+            <Text style={styles.emptyText}>
+              {sources.length === 0 ? '还没有书源' : '这一栏是空的'}
             </Text>
+            <Text style={styles.emptySub}>
+              {sources.length === 0
+                ? '点右上「导入」可以粘贴 JSON、粘链接，或从「文件」里选 .json'
+                : '切换到「全部」看看其它书源'}
+            </Text>
+            {sources.length === 0 && (
+              <TouchableOpacity style={styles.sampleBtn} onPress={addSample}>
+                <Text style={styles.sampleText}>先加一个示例书源试试</Text>
+              </TouchableOpacity>
+            )}
           </View>
         }
       />
 
-      <Modal
-        visible={modal}
-        transparent
-        animationType="slide"
-        onRequestClose={closeModal}
-      >
+      <Modal visible={modal} transparent animationType="slide" onRequestClose={closeModal}>
         {/*
           键盘处理：
           - KeyboardAvoidingView 让面板整体抬到键盘上方，输入框不会被挡住
@@ -196,7 +281,10 @@ export function SourcesScreen() {
           <View style={styles.sheet}>
             <View style={styles.sheetHead}>
               <Text style={styles.modalTitle}>导入书源</Text>
-              <TouchableOpacity onPress={closeModal} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <TouchableOpacity
+                onPress={closeModal}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
                 <Text style={styles.closeText}>关闭</Text>
               </TouchableOpacity>
             </View>
@@ -230,10 +318,7 @@ export function SourcesScreen() {
             </View>
 
             <View style={styles.modalBtns}>
-              <TouchableOpacity
-                style={[styles.mbtn, styles.mcancel]}
-                onPress={closeModal}
-              >
+              <TouchableOpacity style={[styles.mbtn, styles.mcancel]} onPress={closeModal}>
                 <Text style={styles.btnText}>取消</Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -267,24 +352,58 @@ export function SourcesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: APP.bg },
-  summary: {
+  head: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
+    paddingTop: 10,
+    paddingBottom: 8,
+  },
+  stat: { flex: 1, color: APP.text, fontSize: 14 },
+  headBtns: { flexDirection: 'row', alignItems: 'center' },
+  miniBtn: {
+    backgroundColor: APP.card,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 8,
+    marginLeft: 6,
+    borderWidth: 1,
     borderColor: APP.border,
   },
-  summaryText: { color: APP.text, fontSize: 14 },
-  btns: { flexDirection: 'row' },
-  btn: {
-    backgroundColor: APP.card,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+  miniText: { color: APP.text, fontSize: 13 },
+  miniPrimary: {
+    backgroundColor: APP.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 8,
-    marginLeft: 8,
+    marginLeft: 6,
+  },
+  miniPrimaryText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  filterRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: APP.card,
+    marginRight: 8,
     borderWidth: 1,
+    borderColor: APP.border,
+  },
+  chipOn: { backgroundColor: APP.accent, borderColor: APP.accent },
+  chipText: { color: APP.sub, fontSize: 12 },
+  chipTextOn: { color: '#fff', fontWeight: '600' },
+  note: {
+    color: APP.sub,
+    fontSize: 12,
+    lineHeight: 17,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
     borderColor: APP.border,
   },
   btnText: { color: APP.text, fontSize: 14 },
@@ -294,7 +413,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: APP.card,
     borderRadius: 10,
-    padding: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: APP.border,
@@ -302,20 +422,29 @@ const styles = StyleSheet.create({
   info: { flex: 1 },
   name: { color: APP.text, fontSize: 16, fontWeight: '700' },
   sub: { color: APP.sub, fontSize: 12, marginTop: 4 },
-  toggle: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginRight: 8,
-  },
-  on: { backgroundColor: APP.accent },
-  off: { backgroundColor: APP.card2 },
-  toggleText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  del: { padding: 6 },
+  switch: { marginLeft: 8, transform: [{ scaleX: 0.82 }, { scaleY: 0.82 }] },
+  del: { padding: 6, marginLeft: 4 },
   delText: { color: APP.danger, fontSize: 16 },
-  empty: { alignItems: 'center', marginTop: 80 },
+  empty: { alignItems: 'center', marginTop: 70 },
   emptyText: { color: APP.text, fontSize: 17 },
-  emptySub: { color: APP.sub, fontSize: 13, marginTop: 8, textAlign: 'center', paddingHorizontal: 30 },
+  emptySub: {
+    color: APP.sub,
+    fontSize: 13,
+    marginTop: 8,
+    textAlign: 'center',
+    paddingHorizontal: 30,
+    lineHeight: 19,
+  },
+  sampleBtn: {
+    marginTop: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 9,
+    backgroundColor: APP.card,
+    borderWidth: 1,
+    borderColor: APP.border,
+  },
+  sampleText: { color: APP.accent, fontSize: 14, fontWeight: '600' },
   kavWrap: { flex: 1, justifyContent: 'flex-end' },
   // 面板外的暗色区域：铺满整屏，点一下收键盘
   modalMask: {

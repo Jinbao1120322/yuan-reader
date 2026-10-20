@@ -55,19 +55,145 @@ export function loadHtml(html: string): CheerioRoot {
   return cheerioLib().load(html);
 }
 
-function extractAttr(
-  $: CheerioRoot,
-  el: any,
-  attr: string | null
-): string {
+// ---------------------------------------------------------------------------
+// Legado（开源阅读）规则语法 → CSS 选择器
+//
+// 社区书源几乎全部用 Legado 的简写，不是标准 CSS：
+//   class.result-list@tag.li@text   →  .result-list li 取文本
+//   class.item.0@tag.a@href         →  .item:eq(0) a 取 href
+//   tag.h3@text                     →  h3 取文本
+//   id.content@html                 →  #content 取 innerHTML
+//
+// 之前直接把 "class.result-list@tag.li" 丢给 cheerio，它会把 class 当成标签名，
+// 一个元素都选不到 → 请求成功但结果永远为空。
+// ---------------------------------------------------------------------------
+
+// Legado 内置的取值属性
+const ATTR_NAMES = new Set([
+  'text',
+  'textnodes',
+  'owntext',
+  'html',
+  'all',
+  'outerhtml',
+  'href',
+  'src',
+  'content',
+  'title',
+  'alt',
+  'value',
+  'data-src',
+  'data-original',
+  'data-id',
+  'abs:href',
+  'abs:src',
+]);
+
+// 以这些词开头的是「选择器类型」，不能当属性名
+const SEL_TYPES = new Set(['class', 'tag', 'id', 'text']);
+
+function isAttrName(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  if (ATTR_NAMES.has(t.toLowerCase())) return true;
+  // 任意 HTML 属性名（不含点、空格的选择器语法）
+  return /^[A-Za-z_][\w:-]*$/.test(t) && !SEL_TYPES.has(t.toLowerCase());
+}
+
+// 类名 / id / 标签名 → 合法的 CSS 标识符
+function escapeIdent(s: string): string {
+  return s.replace(/([^\w-])/g, '\\$1');
+}
+
+interface CssSel {
+  css: string;
+  index?: number;
+}
+
+// 单个 Legado 片段 → CSS
+function segToCss(segRaw: string): CssSel | null {
+  let s = segRaw.trim();
+  if (!s) return null;
+
+  // @css: / css: 前缀：后面整体当标准 CSS
+  if (/^@?css:/i.test(s)) {
+    s = s.replace(/^@?css:/i, '').trim();
+    return s ? { css: s } : null;
+  }
+  // 其它引擎前缀交给调用方跳过
+  if (/^@?(xpath|json|js|regex):/i.test(s) || s.startsWith('//')) return null;
+
+  // 尾部索引：class.item.0 / class.item.-1
+  let index: number | undefined;
+  const m = s.match(/^(.*?)\.(-?\d+)$/);
+  if (m && m[1] && !/^[\d.]+$/.test(m[1])) {
+    s = m[1];
+    index = parseInt(m[2], 10);
+  }
+
+  const dot = s.indexOf('.');
+  if (dot === -1) return { css: s, index }; // 纯标签名 / 纯 CSS
+
+  const type = s.slice(0, dot).toLowerCase();
+  const name = s.slice(dot + 1);
+  if (!name) return null;
+
+  if (type === 'class') return { css: '.' + escapeIdent(name), index };
+  if (type === 'tag') return { css: escapeIdent(name), index };
+  if (type === 'id') return { css: '#' + escapeIdent(name), index };
+  if (type === 'text') return null; // 文本包含匹配，暂不支持
+
+  // 已经是标准 CSS（如 li.item）
+  return { css: s, index };
+}
+
+interface ParsedPart {
+  selectors: CssSel[];
+  attr: string | null;
+}
+
+function parsePart(partRaw: string): ParsedPart {
+  let body = partRaw.trim();
+  let attr: string | null = null;
+
+  // 只剥末尾一个 @属性
+  const tail = body.match(/@([A-Za-z_][\w:-]*)$/);
+  if (tail && tail[0].length < body.length && isAttrName(tail[1])) {
+    attr = tail[1].toLowerCase();
+    body = body.slice(0, body.length - tail[0].length);
+  }
+
+  const selectors: CssSel[] = [];
+  for (const seg of body.split('@')) {
+    const c = segToCss(seg);
+    if (c) selectors.push(c);
+  }
+  return { selectors, attr };
+}
+
+function extractAttr($: CheerioRoot, el: any, attr: string | null): string {
   const $el = $(el);
-  if (!attr || attr === 'text' || attr === 'textnode') {
+  const a = (attr || 'text').toLowerCase();
+  if (a === 'text') {
     return ($el.text() || '').replace(/\s+/g, ' ').trim();
   }
-  if (attr === 'html') {
+  if (a === 'owntext') {
+    // 只取直接文本节点，不含子元素里的文字
+    const own = ($el.contents() as any)
+      .filter((_: number, n: any) => n.type === 'text')
+      .map((_: number, n: any) => n.data)
+      .get()
+      .join('');
+    return (own || '').replace(/\s+/g, ' ').trim();
+  }
+  if (a === 'html' || a === 'outerhtml' || a === 'all') {
     return $el.html() || '';
   }
-  return $el.attr(attr) || '';
+  if (a === 'content') {
+    const meta = $el.attr('content');
+    return meta ? meta : ($el.text() || '').trim();
+  }
+  return $el.attr(a) || '';
 }
 
 // 处理 ## 净化：left 为选择器，right 为 regex 或 regex##replacement
@@ -84,7 +210,7 @@ function applyClean(src: string, rule: string): string {
   }
   try {
     const re = new RegExp(right, 'g');
-    return (left ? src : src).replace(re, repl);
+    return (left || src).replace(re, repl);
   } catch {
     return src;
   }
@@ -95,7 +221,27 @@ function splitTop(s: string, sep: string): string[] {
   return s.split(sep).map((x) => x.trim());
 }
 
-// 提取单个 OR 段（AND 链）得到元素集合（用于列表 / 子规则上下文）
+function normIndex(i: number, len: number): number {
+  return i < 0 ? Math.max(0, len + i) : i;
+}
+
+// 顺着 Legado 片段链向下选择，返回元素集合
+function walkSelectors(
+  $: CheerioRoot,
+  start: any,
+  selectors: CssSel[]
+): any {
+  let cur: any = start;
+  for (const s of selectors) {
+    if (!s.css) continue;
+    const found = typeof cur === 'function' ? $(s.css) : cur.find(s.css);
+    cur = typeof s.index === 'number' ? found.eq(normIndex(s.index, found.length)) : found;
+    if (!cur || cur.length === 0) return $();
+  }
+  return cur;
+}
+
+// 提取单个 OR 段（&& 链）得到元素集合（用于列表 / 子规则上下文）
 function selectElements(
   $: CheerioRoot,
   context: any,
@@ -103,19 +249,19 @@ function selectElements(
 ): any {
   const parts = splitTop(seg, '&&');
   let cur: any = context;
+  let touched = false;
   for (const p of parts) {
-    let sel = p;
-    if (sel.startsWith('css:')) sel = sel.slice(4);
-    else if (sel.startsWith('xpath:') || sel.startsWith('//')) {
-      // xpath 仅支持值提取，列表场景回退为空
-      return $();
+    const parsed = parsePart(p);
+    if (!parsed.selectors.length) {
+      // xpath / js / regex / text 这类规则在列表场景无法处理
+      if (/@?(xpath|json|js|regex):|^\/\//i.test(p)) return $();
+      continue;
     }
-    if (sel.startsWith('regex:')) return $();
-    if (sel.indexOf('@') !== -1) sel = sel.split('@')[0];
-    if (!sel) return $();
-    cur = cur === context && typeof context === 'function' ? $(sel) : (cur as any).find(sel);
+    cur = walkSelectors($, cur, parsed.selectors);
+    touched = true;
+    if (!cur || cur.length === 0) return $();
   }
-  return cur || $();
+  return touched ? cur : $();
 }
 
 // 提取值（字符串数组），context 为 cheerio 上下文
@@ -126,6 +272,7 @@ export function getValues(
   baseUrl: string
 ): string[] {
   if (!ruleStr) return [];
+
   // 整个规则先做 ## 净化拆分（仅当规则整体含 ## 且左侧为选择器时）
   const cleanIdx = ruleStr.indexOf('##');
   let cleanRegex: string | null = null;
@@ -144,55 +291,76 @@ export function getValues(
     selectorRule = head;
   }
 
-  const orSegs = splitTop(selectorRule, '|');
+  // Legado 用 || 表示并列，先试 ||
+  const orSegs =
+    selectorRule.indexOf('||') !== -1
+      ? splitTop(selectorRule, '||')
+      : splitTop(selectorRule, '|');
+
   for (const seg of orSegs) {
-    let cur = context;
-    const parts = splitTop(seg, '&&');
-    let lastAttr: string | null = null;
-    let usedXpath = false;
-    for (const p of parts) {
-      let sel = p;
-      const at = sel.match(/^(.*?)@([A-Za-z0-9_]+)$/);
-      if (at) {
-        sel = at[1];
-        lastAttr = at[2].toLowerCase();
-      }
-      if (sel.startsWith('regex:')) {
-        const reSrc = sel.slice(6);
-        // 对当前文本做正则
-        const curText = cur === context && typeof context === 'function'
+    // regex: 规则直接在整段文本上做匹配
+    const regexHit = seg.match(/(?:^|&&)\s*@?regex:([\s\S]*)$/i);
+    if (regexHit) {
+      const curText =
+        typeof context === 'function'
           ? $('body').text()
-          : (cur as any).text ? (cur as any).text() : '';
-        const m = curText.match(new RegExp(reSrc, 'g')) || [];
-        return m;
-      }
-      if (sel.startsWith('xpath:')) {
-        usedXpath = true;
-        break;
-      }
-      if (sel.startsWith('css:')) sel = sel.slice(4);
-      if (!sel) continue;
-      if (cur === context && typeof context === 'function') {
-        cur = $(sel);
-      } else {
-        cur = (cur as any).find(sel);
-      }
-    }
-    if (usedXpath) {
-      // xpath 值提取（best-effort）
-      const xres = xpathValue($, context, seg, lastAttr);
-      if (xres.length) {
-        return cleanRegex ? xres.map((s) => applyClean(s, `##${cleanRegex}##${cleanRepl}`)) : xres;
+          : (context as any).text
+          ? (context as any).text()
+          : '';
+      try {
+        const m = curText.match(new RegExp(regexHit[1], 'g')) || [];
+        if (m.length) return m;
+      } catch {
+        /* 非法正则，继续试下一段 */
       }
       continue;
     }
-    if (!cur || (cur as any).length === 0) continue;
+
+    // xpath: 走独立分支
+    if (/@?xpath:|^\/\//i.test(seg)) {
+      const xres = xpathValue($, context, seg, null);
+      if (xres.length) {
+        return cleanRegex
+          ? xres.map((s) => applyClean(s, `##${cleanRegex}##${cleanRepl}`))
+          : xres;
+      }
+      continue;
+    }
+
+    const parts = splitTop(seg, '&&');
+    let cur: any = context;
+    let lastAttr: string | null = null;
+    let touched = false;
+
+    for (const p of parts) {
+      const parsed = parsePart(p);
+      if (parsed.attr) lastAttr = parsed.attr;
+      if (!parsed.selectors.length) {
+        // 只有 @text 这种纯取值段
+        continue;
+      }
+      cur = walkSelectors($, cur, parsed.selectors);
+      touched = true;
+      if (!cur || cur.length === 0) break;
+    }
+
+    if (!touched) {
+      // 规则整体没有选择器（例如只剩 @text），直接取 context 自身
+      const v = extractAttr($, context, lastAttr);
+      if (v) return cleanRegex ? [applyClean(v, `##${cleanRegex}##${cleanRepl}`)] : [v];
+      continue;
+    }
+    if (!cur || cur.length === 0) continue;
+
     const vals = (cur as any)
       .map((_: any, el: any) => extractAttr($, el, lastAttr))
       .get()
       .filter((v: string) => v && v.length > 0);
+
     if (vals.length) {
-      return cleanRegex ? vals.map((s: string) => applyClean(s, `##${cleanRegex}##${cleanRepl}`)) : vals;
+      return cleanRegex
+        ? vals.map((s: string) => applyClean(s, `##${cleanRegex}##${cleanRepl}`))
+        : vals;
     }
   }
   return [];
@@ -205,7 +373,8 @@ export function getElements(
   ruleStr: string | undefined
 ): any {
   if (!ruleStr) return $();
-  const orSegs = splitTop(ruleStr, '|');
+  const orSegs =
+    ruleStr.indexOf('||') !== -1 ? splitTop(ruleStr, '||') : splitTop(ruleStr, '|');
   for (const seg of orSegs) {
     const els = selectElements($, context, seg);
     if (els && (els as any).length > 0) return els;
@@ -220,10 +389,15 @@ function xpathValue(
   attr: string | null
 ): string[] {
   try {
-    let html = typeof context === 'function' ? $('html').html() || '' : (context as any).html ? (context as any).html() : $('html').html() || '';
+    let html =
+      typeof context === 'function'
+        ? $('html').html() || ''
+        : (context as any).html
+        ? (context as any).html()
+        : $('html').html() || '';
     const doc = new (xmldomLib().DOMParser)().parseFromString(html, 'text/html');
     const parts = splitTop(seg, '&&');
-    let xexpr = parts[parts.length - 1].replace(/^xpath:/, '').split('@')[0];
+    let xexpr = parts[parts.length - 1].replace(/^@?xpath:/i, '').split('@')[0];
     if (!xexpr.startsWith('//')) xexpr = '//' + xexpr;
     const nodes = xpathLib().select(xexpr, doc) as any[];
     const out: string[] = [];
