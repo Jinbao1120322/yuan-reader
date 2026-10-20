@@ -1,4 +1,4 @@
-import iconv from 'iconv-lite';
+import { Buffer } from 'buffer';
 import { loadHtml, getValues, getElements, CheerioRoot } from './select';
 import { buildSearchUrl, resolveUrl } from './evalUrl';
 import {
@@ -9,6 +9,18 @@ import {
   ChapterContent,
   RuleContent,
 } from './types';
+
+// iconv-lite 改为运行期懒加载：避免它在模块加载期抛错时拖垮 App 启动。
+// （它是 App 依赖图里唯一依赖 Node 内置模块 string_decoder 的库，风险最高）
+type IconvModule = { decode: (buf: any, enc: string) => string };
+let _iconv: IconvModule | null = null;
+function iconvLib(): IconvModule {
+  if (!_iconv) {
+    const m: any = require('iconv-lite');
+    _iconv = (m && m.decode ? m : (m && m.default) || m) as IconvModule;
+  }
+  return _iconv as IconvModule;
+}
 
 const DEFAULT_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
@@ -42,17 +54,17 @@ async function fetchHtml(
   if (m) charset = m[1].toLowerCase();
   // 若 header 未声明，尝试从 <meta> 提取（先按 utf-8 解码看 meta）
   if (!m) {
-    const peek = iconv.decode(Buffer.from(buf), 'utf-8');
+    const peek = iconvLib().decode(Buffer.from(buf), 'utf-8');
     const mm = peek.match(/<meta[^>]+charset=["']?([\w-]+)/i);
     if (mm) charset = mm[1].toLowerCase();
   }
   if (charset === 'utf-8' || charset === 'utf8') {
-    return iconv.decode(Buffer.from(buf), 'utf-8');
+    return iconvLib().decode(Buffer.from(buf), 'utf-8');
   }
   try {
-    return iconv.decode(Buffer.from(buf), charset);
+    return iconvLib().decode(Buffer.from(buf), charset);
   } catch {
-    return iconv.decode(Buffer.from(buf), 'utf-8');
+    return iconvLib().decode(Buffer.from(buf), 'utf-8');
   }
 }
 

@@ -2,14 +2,57 @@
 // undici / parse5-parser-stream / encoding-sniffer / node:stream 等 Node 内置模块，
 // React Native 的 Metro 打包器无法解析，会导致 xcodebuild archive 失败。
 // /slim 仅依赖 htmlparser2 + domhandler，纯浏览器/移动端可用，API 与完整版一致。
-import * as cheerio from 'cheerio/slim';
-import { DOMParser } from '@xmldom/xmldom';
-import * as xpath from 'xpath';
+import type { CheerioAPI } from 'cheerio/slim';
 
-export type CheerioRoot = cheerio.CheerioAPI;
+export type CheerioRoot = CheerioAPI;
+
+// ---------------------------------------------------------------------------
+// 解析库改为「运行期懒加载」。
+//
+// 原因：这三个库（cheerio/slim、@xmldom/xmldom、xpath）原本是静态 import，
+// 会被 App 的依赖图在启动时**立即求值**。只要其中任何一个在加载期抛错
+// （例如依赖了 Hermes 不支持的 API），registerRootComponent 就执行不到，
+// 表现为「纯白屏 + 无报错 + 不闪退」。
+//
+// 改成函数内 require（Metro 依然会把它们打进 bundle，因为用的是字面量），
+// 只有真正解析网页时才初始化，启动不再受它们影响。
+// ---------------------------------------------------------------------------
+type CheerioModule = { load: (html: string) => CheerioAPI };
+type XmldomModule = {
+  DOMParser: new () => { parseFromString: (src: string, mime: string) => any };
+};
+type XpathModule = { select: (expr: string, node: any) => any[] };
+
+let _cheerio: CheerioModule | null = null;
+let _xmldom: XmldomModule | null = null;
+let _xpath: XpathModule | null = null;
+
+function cheerioLib(): CheerioModule {
+  if (!_cheerio) {
+    const m: any = require('cheerio/slim');
+    _cheerio = (m && m.load ? m : (m && m.default) || m) as CheerioModule;
+  }
+  return _cheerio as CheerioModule;
+}
+
+function xmldomLib(): XmldomModule {
+  if (!_xmldom) {
+    const m: any = require('@xmldom/xmldom');
+    _xmldom = (m && m.DOMParser ? m : (m && m.default) || m) as XmldomModule;
+  }
+  return _xmldom as XmldomModule;
+}
+
+function xpathLib(): XpathModule {
+  if (!_xpath) {
+    const m: any = require('xpath');
+    _xpath = (m && m.select ? m : (m && m.default) || m) as XpathModule;
+  }
+  return _xpath as XpathModule;
+}
 
 export function loadHtml(html: string): CheerioRoot {
-  return cheerio.load(html);
+  return cheerioLib().load(html);
 }
 
 function extractAttr(
@@ -178,11 +221,11 @@ function xpathValue(
 ): string[] {
   try {
     let html = typeof context === 'function' ? $('html').html() || '' : (context as any).html ? (context as any).html() : $('html').html() || '';
-    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const doc = new (xmldomLib().DOMParser)().parseFromString(html, 'text/html');
     const parts = splitTop(seg, '&&');
     let xexpr = parts[parts.length - 1].replace(/^xpath:/, '').split('@')[0];
     if (!xexpr.startsWith('//')) xexpr = '//' + xexpr;
-    const nodes = xpath.select(xexpr, doc) as any[];
+    const nodes = xpathLib().select(xexpr, doc) as any[];
     const out: string[] = [];
     for (const n of nodes) {
       if (n.nodeType === 2) out.push(n.nodeValue || '');

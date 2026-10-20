@@ -1,4 +1,15 @@
-import iconv from 'iconv-lite';
+import { Buffer } from 'buffer';
+
+// iconv-lite 运行期懒加载：避免它在模块加载期抛错拖垮 App 启动
+type IconvModule = { decode: (buf: any, enc: string) => string };
+let _iconv: IconvModule | null = null;
+function iconvLib(): IconvModule {
+  if (!_iconv) {
+    const m: any = require('iconv-lite');
+    _iconv = (m && m.decode ? m : (m && m.default) || m) as IconvModule;
+  }
+  return _iconv as IconvModule;
+}
 
 export const LOCAL_SOURCE_ID = '__local__';
 
@@ -25,11 +36,11 @@ export async function readLocalText(uri: string): Promise<string> {
   const resp = await fetch(uri);
   const buf = await resp.arrayBuffer();
   // 先按 utf-8 解码，若出现大量替换符则尝试 gbk
-  let text = iconv.decode(Buffer.from(buf), 'utf-8');
+  let text = iconvLib().decode(Buffer.from(buf), 'utf-8');
   const bad = (text.match(/\ufffd/g) || []).length;
   if (bad > 20) {
     try {
-      text = iconv.decode(Buffer.from(buf), 'gbk');
+      text = iconvLib().decode(Buffer.from(buf), 'gbk');
     } catch {
       /* keep utf-8 */
     }

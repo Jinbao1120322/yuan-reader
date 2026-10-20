@@ -44,6 +44,34 @@ jobs:
           EXPO_NO_TELEMETRY: '1'
         run: npx expo prebuild --platform ios --no-install
 
+      # 原生探针 + 诊断信息
+      # 把 window 背景改成品红色：如果 JS 连引擎都没跑起来（React 什么都没渲染），
+      # 屏幕上看到的就是品红而不是纯白。这样一次装机即可区分「JS 挂了」和
+      # 「React 渲染成空」，不必再靠猜。App 正常时这个背景会被完全覆盖，看不出来。
+      # 同时把 AppDelegate 全文打进日志，便于核对根视图装配方式。
+      - name: Native probe (magenta window) and dump AppDelegate
+        run: |
+          set +e
+          f=$(find ios -maxdepth 4 \( -name 'AppDelegate.swift' -o -name 'AppDelegate.mm' \) | head -n1)
+          echo "AppDelegate path: ${f:-<not found>}"
+          if [ -z "$f" ]; then echo "WARN: AppDelegate not found, skip probe"; exit 0; fi
+          echo "----- AppDelegate BEGIN -----"
+          cat "$f"
+          echo "----- AppDelegate END -----"
+          cp "$f" "$f.bak"
+          if grep -q 'UIWindow(frame:' "$f"; then
+            perl -0pi -e 's/(window = UIWindow\(frame:[^\n]*\n)/$1    window?.backgroundColor = UIColor.magenta\n/' "$f"
+            echo "swift patched: $(grep -c 'UIColor.magenta' "$f")"
+          elif grep -q 'UIWindow alloc' "$f"; then
+            perl -0pi -e 's/(self\.window = \[\[UIWindow alloc\][^\n]*\n)/$1  self.window.backgroundColor = [UIColor magentaColor];\n/' "$f"
+            echo "objc patched: $(grep -c 'magentaColor' "$f")"
+          else
+            echo "WARN: no known UIWindow pattern, keep original"
+            cp "$f.bak" "$f"
+          fi
+          if cmp -s "$f" "$f.bak"; then echo "PROBE: not applied"; else echo "PROBE: applied"; fi
+          exit 0
+
       - name: Patch Podfile (fmt c++17 for Xcode 26 clang) and install pods
         run: |
           cd ios
@@ -108,6 +136,17 @@ jobs:
               exit 1
               ;;
           esac
+
+          echo "--- 校验 JS bundle 确实包含本次引导层改动 ---"
+          BUNDLE=$(find ios/build/App.xcarchive/Products/Applications -maxdepth 2 -name 'main.jsbundle' | head -n1)
+          echo "bundle: $BUNDLE"
+          if [ -z "$BUNDLE" ]; then echo "ERROR: main.jsbundle 不存在"; exit 1; fi
+          if grep -aq '#ff9500' "$BUNDLE"; then
+            echo "OK: bundle 含 v1.0.3 引导层探针色，确认新代码已打进包"
+          else
+            echo "ERROR: bundle 不含引导层探针色 #ff9500 —— 打包用的是旧 index.js"
+            exit 1
+          fi
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
