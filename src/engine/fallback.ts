@@ -87,6 +87,59 @@ export function guessTocUrl(html: string, baseUrl: string): string | null {
   }
 }
 
+/**
+ * 目录页里一次性列出的所有分页地址（很多站用 <select> 把所有页的地址铺在源码里）。
+ * 拿到之后可以并行抓，比一页一页顺着「下一页」翻快好几倍。
+ */
+export function tocPagingUrls(html: string, baseUrl: string): string[] {
+  try {
+    const $ = loadHtml(html);
+    const set = new Set<string>();
+    $('a[href], option').each((_: number, el: any) => {
+      const $el = $(el);
+      const raw = $el.attr('href') || $el.attr('value') || '';
+      if (!raw) return;
+      if (!/(index|asc|page|list|chapterlist)[-_]?\d+/i.test(raw)) return;
+      const abs = resolveUrl(raw, baseUrl);
+      if (abs && abs !== baseUrl) set.add(abs);
+    });
+    return Array.from(set);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 目录页的「下一页」。很多站的目录是分页的（index_2.html、asc-2/ 之类），
+ * 不翻页就只能拿到第一页那二三十章，用户会以为这本书就这么短。
+ */
+export function nextTocPageUrl(html: string, baseUrl: string): string | null {
+  try {
+    const $ = loadHtml(html);
+    let found: string | null = null;
+    $('a[href]').each((_: number, el: any) => {
+      if (found) return;
+      const t = ($(el).text() || '').replace(/\s+/g, '');
+      const h = $(el).attr('href') || '';
+      if (!h || /^(javascript:|#|mailto:)/i.test(h)) return;
+      if (/^(下一页|下一頁|下页|下頁|next|›|»)$/i.test(t)) {
+        found = resolveUrl(h, baseUrl);
+      }
+    });
+    if (found) return found;
+
+    // 兜底：从 index_2.html / asc-2/ 这种带页码的地址推下一页。
+    // 只认明确带页码前缀的，避免把 /25/25428/ 误推成 /25/25429/
+    const m = baseUrl.match(/^(.*?(?:index_?|asc-|page-?|list_?|chapterlist-?))(\d+)(\.html?|\/?)$/i);
+    if (m && Number(m[2]) < 5000) {
+      return `${m[1]}${Number(m[2]) + 1}${m[3]}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 interface Link {
   name: string;
   url: string;

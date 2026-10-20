@@ -2,7 +2,7 @@ import { Buffer } from 'buffer';
 import { loadHtml, getValues, getElements, CheerioRoot } from './select';
 import { buildSearchUrl, resolveUrl } from './evalUrl';
 import { jsonField, jsonList } from './jsonPath';
-import { pickBestChapters, guessContent, guessTocUrl, xpathChapters } from './fallback';
+import { pickBestChapters, guessContent, guessTocUrl, nextTocPageUrl, tocPagingUrls, xpathChapters } from './fallback';
 import {
   BookSource,
   SearchBook,
@@ -339,9 +339,17 @@ export async function getToc(
   }
   const pages: Page[] = [];
   const seen = new Set<string>();
+  // 目录页可能是分页的，所以上限给得比"三五个候选页"宽一些
+  // 目录分页可以很多（2941 章的书有 147 页），这两个上限决定"能拿多全 vs 等多久"
+  const MAX_TOC_PAGES = 50;
+  const MAX_TOC_CHAPTERS = 1200;
 
   const load = async (u: string): Promise<Page | null> => {
-    if (!u || seen.has(u) || pages.length >= 5) return null;
+    if (!u) return null;
+    // 同一个地址可能先被 guessTocUrl 当作「目录入口」加载过，翻页撞上时要复用而不是放弃
+    const exist = pages.find((x) => x.url === u);
+    if (exist) return exist;
+    if (pages.length >= MAX_TOC_PAGES) return null;
     seen.add(u);
     try {
       const html = await fetchHtml(u, source, 'GET', 10000);
@@ -354,36 +362,192 @@ export async function getToc(
     }
   };
 
+  // 每页按规则解析，结果挂在 parsed 上（同一页只解析一次）
+  const parsed = new Map<Page, BookChapter[]>();
+  const parsePage = (p: Page): BookChapter[] => {
+    const hit = parsed.get(p);
+    if (hit) return hit;
+    if (!rule || !rule.chapterList) return [];
+    const ch = tocByRule(p.html, p.url, rule);
+    if (ch.length) parsed.set(p, ch);
+    return ch;
+  };
+
+  const bestSoFar = (): { ch: BookChapter[]; page?: Page } => {
+    let best: { ch: BookChapter[]; page?: Page } = { ch: [] };
+    for (const [p, ch] of parsed) {
+      if (ch.length > best.ch.length) best = { ch, page: p };
+    }
+    return best;
+  };
+
   await load(tocUrl);
   if (bookUrl) await load(bookUrl);
   if (!pages.length) return [];
+  pages.slice().forEach(parsePage);
 
-  // ① 规则
-  if (rule && rule.chapterList) {
-    for (const p of pages) {
-      const ch = tocByRule(p.html, p.url, rule);
-      if (ch.length) return ch;
+  /*
+   * 关键：**不再"解析出章节就立刻返回"**。
+   * 详情页上通常挂着「最新章节」十来条，规则一样能匹配，以前就把它当成目录返回了，
+   * 用户看到的就是"这本书只有 7 章"。现在把所有候选页都比一遍，取最完整的那份。
+   */
+
+  // 详情页里常有「查看目录 / 全部章节」的入口，顺着去一次。
+  // 只在当前结果明显不完整时才找 —— 否则在完整目录页上会把底部的「下一页」
+  //（href 里带 index）误当成目录入口。
+  if (bestSoFar().ch.length < 100) {
+    for (const p of pages.slice()) {
+      const link = guessTocUrl(p.html, p.url);
+      if (!link) continue;
+      const np = await load(link);
+      if (np) parsePage(np);
     }
   }
 
-  // ② 详情页里藏着「目录」链接时，顺着去一次
-  for (const p of pages) {
-    const link = guessTocUrl(p.html, p.url);
-    if (!link) continue;
-    const np = await load(link);
-    if (!np) continue;
-    if (rule && rule.chapterList) {
-      const ch = tocByRule(np.html, np.url, rule);
-      if (ch.length) return ch;
+  let best = bestSoFar();
+
+  // 章数明显偏少 → 目录页可能是分页的，把剩下的页补上
+  if (best.page && isTocIncomplete(best.ch)) {
+    const base = best.page;
+    let all = best.ch.slice();
+
+    // ① 目录页常常把全部分页地址铺在源码里（<select> 或底部页码），能一次拿到就并行抓
+    const pages2 = tocPagingUrls(base.html, base.url).slice(0, MAX_TOC_PAGES - 1);
+    if (pages2.length) {
+      const batchSize = 6;
+      for (let i = 0; i < pages2.length && all.length < MAX_TOC_CHAPTERS; i += batchSize) {
+        const chunk = pages2.slice(i, i + batchSize);
+        const got = await Promise.all(chunk.map((u) => load(u)));
+        for (const p2 of got) {
+          if (!p2) continue;
+          const ch = parsePage(p2);
+          if (ch.length) all = dedupeChapters(all.concat(ch));
+        }
+      }
     }
-    break;
+
+    // ② 拿不到分页清单，就顺着「下一页」一页页跟（最多 12 页，别把目录加载拖太久）
+    if (all.length === best.ch.length) {
+      let cur = base;
+      const visited = new Set<string>([cur.url]);
+      for (let guard = 0; guard < 12 && all.length < MAX_TOC_CHAPTERS; guard++) {
+        const next = nextTocPageUrl(cur.html, cur.url);
+        if (!next || visited.has(next)) break;
+        visited.add(next);
+        const np = await load(next);
+        if (!np) break;
+        const ch = parsePage(np);
+        if (!ch.length) break;
+        all = dedupeChapters(all.concat(ch));
+        cur = np;
+      }
+    }
+
+    if (all.length > best.ch.length) {
+      best = { ch: all, page: base };
+    }
   }
 
-  // ③ 按结构猜：多个候选页都猜出东西时，自动挑最像目录的那一份
+  if (best.ch.length) return normalizeChapterOrder(best.ch);
+
+  // 兜底：规则完全对不上时按结构猜
   const guessed = pickBestChapters(pages);
-  if (guessed.length) return guessed;
+  if (guessed.length) return normalizeChapterOrder(guessed);
 
   return [];
+}
+
+/** 中文数字 → 阿拉伯，用于识别章号 */
+function cnToNum(t: string): number {
+  if (/^\d+$/.test(t)) return Number(t);
+  const D: Record<string, number> = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  let unit = 0, num = 0;
+  for (const ch of t) {
+    if (ch === '十' || ch === '百' || ch === '千') {
+      const w = ch === '十' ? 10 : ch === '百' ? 100 : 1000;
+      unit += (num || 1) * w;
+      num = 0;
+    } else if (D[ch] !== undefined) {
+      num = D[ch];
+    } else {
+      return NaN;
+    }
+  }
+  return unit + num;
+}
+
+/** 从章节名里取章号，取不到返回 NaN */
+function chapterNo(name: string): number {
+  const m = /第\s*([0-9零一二三四五六七八九十百千两]+)\s*[章节回]/.exec(name || '');
+  if (m) return cnToNum(m[1]);
+  const m2 = /^\s*(\d+)\s*[、.．:：]/.exec(name || '');
+  if (m2) return Number(m2[1]);
+  return NaN;
+}
+
+/**
+ * 修正章节顺序。
+ * 不少站点的目录是「最新在前」倒序的（翻页拿到的也是从后往前），
+ * 直接交给阅读器会导致"打开就是最后一章"。这里只在识别出明显倒序时翻转，
+ * 拿不到章号就原样返回，不动那些顺序本来就没问题的站点。
+ */
+function normalizeChapterOrder(list: BookChapter[]): BookChapter[] {
+  if (list.length < 3) return list;
+
+  const items = list.map((c, i) => ({ c, i, n: chapterNo(c.name) }));
+  const valid = items.filter((x) => !Number.isNaN(x.n));
+  // 章号覆盖不到八成就不动它（有些站的章节名完全不带数字，硬排会打乱原顺序）
+  if (valid.length < list.length * 0.8) return list;
+
+  // 已经是从小到大就不用动
+  let sorted = true;
+  for (let k = 1; k < valid.length; k++) {
+    if (valid[k].n < valid[k - 1].n) {
+      sorted = false;
+      break;
+    }
+  }
+  if (sorted) return list;
+
+  // 按章号稳定排序；取不到章号的排到最后，保持它们原来的相对顺序
+  const arr = items.slice().sort((a, b) => {
+    const an = Number.isNaN(a.n) ? Number.MAX_SAFE_INTEGER : a.n;
+    const bn = Number.isNaN(b.n) ? Number.MAX_SAFE_INTEGER : b.n;
+    if (an !== bn) return an - bn;
+    return a.i - b.i;
+  });
+  return arr.map((x, i) => ({ ...x.c, index: i }));
+}
+
+/** 章节按 url 去重，分页边界常常重复几章 */
+function dedupeChapters(list: BookChapter[]): BookChapter[] {
+  const seen = new Set<string>();
+  const out: BookChapter[] = [];
+  for (const c of list) {
+    const k = c.url || `${c.name}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ ...c, index: out.length });
+  }
+  return out;
+}
+
+/**
+ * 判断这份目录是不是"不完整"。
+ * 两种情况：条数太少（多半是详情页的最新章节），
+ * 或者章节号远大于条数（比如只有 10 条却写着「第2941章」，明显是倒序摘录）。
+ */
+function isTocIncomplete(ch: BookChapter[]): boolean {
+  if (ch.length < 100) {
+    let maxNo = 0;
+    for (const c of ch) {
+      const m = /第\s*(\d+)\s*[章节回]/.exec(c.name || '');
+      if (m) maxNo = Math.max(maxNo, Number(m[1]));
+    }
+    if (maxNo > ch.length * 3 + 20) return true; // 章节号远超条数
+    return ch.length < 100;
+  }
+  return false;
 }
 
 // —— 章节正文 ——
