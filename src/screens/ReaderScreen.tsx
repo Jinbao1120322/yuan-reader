@@ -149,6 +149,14 @@ export function ReaderScreen() {
   const [tocOpen, setTocOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [switchOpen, setSwitchOpen] = useState(false);
+  // 详情页已经把目录拉过了，直接带过来，省一次请求（只对初始这本书有效，换源后要重拉）
+  const preloadRef = useRef<BookChapter[] | null>(
+    routeParams.preloadedChapters &&
+      routeParams.preloadedSourceId === routeParams.sourceId &&
+      routeParams.preloadedBookUrl === routeParams.bookUrl
+      ? (routeParams.preloadedChapters as BookChapter[])
+      : null
+  );
   // 换源后要跳到「同一章」，先把当前章节名记下来，等新目录到了再匹配
   const pendingChapterTitle = useRef<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -201,6 +209,36 @@ export function ReaderScreen() {
   const shelfBook = shelf.find(
     (s) => s.bookUrl === bookUrl && s.sourceId === sourceId
   );
+  const onShelf = !!shelfBook;
+
+  // 阅读界面里直接收藏。已经在书架上的再点就是移出（会二次确认，进度一起清掉）
+  const toggleShelf = () => {
+    if (onShelf) {
+      Alert.alert('移出书架', `把《${name}》移出书架？阅读进度也会一起清掉。`, [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '移出',
+          style: 'destructive',
+          onPress: () => removeFromShelf(bookUrl, sourceId),
+        },
+      ]);
+      return;
+    }
+    addToShelf({
+      bookUrl,
+      sourceId,
+      name,
+      author,
+      lastChapter: chapters[chapters.length - 1]?.name,
+      addedAt: Date.now(),
+      lastReadAt: Date.now(),
+      lastChapterIndex: index,
+      lastReadPos: 0,
+    });
+    if (chapters.length) cacheChapters(bookUrl, sourceId, chapters);
+    // addToShelf 内部把进度写成 0，这里补回当前正在看的章节
+    updateProgress(bookUrl, sourceId, index, pageIndex);
+  };
 
   // 加载目录
   useEffect(() => {
@@ -220,6 +258,13 @@ export function ReaderScreen() {
           }
         }
       };
+
+      if (preloadRef.current) {
+        const ch = preloadRef.current;
+        preloadRef.current = null;
+        applyList(ch);
+        return;
+      }
 
       if (sourceId === LOCAL_SOURCE_ID) {
         const ch = (await getLocalChapters(bookUrl)) as BookChapter[];
@@ -420,6 +465,21 @@ export function ReaderScreen() {
           backgroundColor={theme.bg}
           textColor={theme.text}
           darkText={settings.theme !== 'night'}
+          right={
+            <TouchableOpacity
+              onPress={toggleShelf}
+              hitSlop={{ top: 12, bottom: 12, left: 14, right: 14 }}
+            >
+              <Text
+                style={{
+                  fontSize: 22,
+                  color: onShelf ? theme.sub : theme.text,
+                }}
+              >
+                {onShelf ? '★' : '☆'}
+              </Text>
+            </TouchableOpacity>
+          }
         />
       </Animated.View>
 
@@ -603,6 +663,18 @@ export function ReaderScreen() {
                 </Text>
               </View>
               <Text style={styles.switchGo}>切换</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.switchRow} onPress={toggleShelf}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.menuLabel}>{onShelf ? '移出书架' : '加入书架'}</Text>
+                <Text style={styles.switchSub} numberOfLines={1}>
+                  {onShelf ? '这本书已经在书架里了' : '把这本书收藏到书架，方便下次接着看'}
+                </Text>
+              </View>
+              <Text style={[styles.switchGo, onShelf && { color: APP.danger }]}>
+                {onShelf ? '移出' : '＋ 添加'}
+              </Text>
             </TouchableOpacity>
             <View style={styles.row}>
               <Text style={styles.menuLabel}>字号</Text>

@@ -156,9 +156,11 @@ function parsePart(partRaw: string): ParsedPart {
   let body = partRaw.trim();
   let attr: string | null = null;
 
-  // 只剥末尾一个 @属性
+  // 只剥末尾一个 @属性。
+  // 注意这里用 <=：规则可以整体只有一个 @href（条目本身就是 <a> 的常见情形），
+  // 这时 selectors 为空、attr 为 href，getValues 会走「直接取 context 自身属性」分支。
   const tail = body.match(/@([A-Za-z_][\w:-]*)$/);
-  if (tail && tail[0].length < body.length && isAttrName(tail[1])) {
+  if (tail && tail[0].length <= body.length && isAttrName(tail[1])) {
     attr = tail[1].toLowerCase();
     body = body.slice(0, body.length - tail[0].length);
   }

@@ -1,0 +1,34 @@
+[
+  {
+    "bookSourceName": "蚂蚁阅读",
+    "bookSourceUrl": "http://wap.mayitxt.info",
+    "bookSourceGroup": "自定义",
+    "bookSourceType": 0,
+    "bookSourceComment": "蚂蚁阅读手机站。搜索参数是 searchkey（不是常见的 q），关键词按 UTF-8 传，别转 GBK。",
+    "enabled": true,
+    "header": "{\"User-Agent\":\"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1\"}",
+    "searchUrl": "/modules/article/search.php?searchkey={{key}}",
+    "ruleSearch": {
+      "bookList": "class.onefourbox@tag.a",
+      "name": "tag.h3@text",
+      "author": "class.listbook-info@tag.p@text",
+      "bookUrl": "@href",
+      "coverUrl": "tag.img@src",
+      "kind": "class.book-tag@text"
+    },
+    "ruleBookInfo": {
+      "name": "class.book_inf@tag.h3@tag.a@text",
+      "author": "class.qtxx@tag.p@text##^\\s*作者[:：]\\s*",
+      "coverUrl": "class.book_cov@tag.img@src",
+      "tocUrl": "class.book_cov@tag.a@href"
+    },
+    "ruleToc": {
+      "chapterList": "class.mulu_uld@tag.li",
+      "chapterName": "tag.h3@ownText",
+      "chapterUrl": "tag.a@href"
+    },
+    "ruleContent": {
+      "content": "class.textarticle@html##<div id=\"center_tip\">[\\s\\S]*?</div>"
+    }
+  }
+]

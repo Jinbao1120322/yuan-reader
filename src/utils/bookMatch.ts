@@ -72,6 +72,33 @@ export interface FindAltOptions {
   concurrency?: number;
   isCancelled?: () => boolean;
   onProgress?: (done: number, total: number, found: number) => void;
+  /** 每搜到一个就回调一次，让界面边搜边显示，不用等全部跑完 */
+  onFound?: (b: SearchBook) => void;
+}
+
+// 换源结果的短期缓存。
+// 同一个作者的书往往要好几个源才有，用户会反复打开换源面板挑；
+// 每次重开都把所有源重跑一遍既慢又浪费流量，所以按「书名+作者」缓存 5 分钟。
+const ALT_CACHE_TTL = 5 * 60 * 1000;
+const altCache = new Map<string, { at: number; list: SearchBook[] }>();
+
+function cacheKeyOf(name: string, author?: string): string {
+  return `${normKey(name)}|${normKey(author || '')}`;
+}
+
+export function getCachedAltSources(name: string, author?: string): SearchBook[] | null {
+  const k = cacheKeyOf(name, author);
+  const e = altCache.get(k);
+  if (!e) return null;
+  if (Date.now() - e.at > ALT_CACHE_TTL) {
+    altCache.delete(k);
+    return null;
+  }
+  return e.list;
+}
+
+export function clearAltCache(name: string, author?: string): void {
+  altCache.delete(cacheKeyOf(name, author));
 }
 
 /**
@@ -109,6 +136,7 @@ export async function findAltSources(
         if (hit && !seen.has(hit.sourceId)) {
           seen.add(hit.sourceId);
           out.push(hit);
+          if (opt.onFound) opt.onFound(hit); // 边搜边显示
         }
       } catch {
         /* 单个源失败不影响整体 */
@@ -123,12 +151,15 @@ export async function findAltSources(
   await Promise.all(Array.from({ length: n }, () => worker()));
   report();
 
-  // 书名 + 作者都对上的排前面
-  return out.sort((a, b) => {
+  const sorted = out.slice().sort((a, b) => {
     const sa = normKey(a.author) === normKey(author) ? 0 : 1;
     const sb = normKey(b.author) === normKey(author) ? 0 : 1;
     return sa - sb;
   });
+  if (!(opt.isCancelled && opt.isCancelled())) {
+    altCache.set(cacheKeyOf(name, author), { at: Date.now(), list: sorted });
+  }
+  return sorted;
 }
 
 // —— 章节对齐（换源后要跳到「同一章」）——

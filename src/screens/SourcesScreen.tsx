@@ -8,6 +8,7 @@ import { APP } from '../theme/theme';
 import { TopBar } from '../components/TopBar';
 import { readLocalText } from '../utils/localBook';
 import { parseSourceText } from '../utils/parseSources';
+import { filterSources, SourceFilter } from '../utils/sourceFilter';
 import {
   CheckItem,
   CHECK_KEYWORD,
@@ -37,6 +38,39 @@ export function SourcesScreen() {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [query, setQuery] = useState('');
+
+  // 一键清空：删光所有书源。给个撤销入口，清空是重来用的，误点了不至于要重新导一遍。
+  const clearAll = () => {
+    if (!sources.length) return;
+    Alert.alert(
+      '清空所有书源',
+      `将删除全部 ${sources.length} 个书源。\n\n书源清空后，书架里的书就读不了了（换源也搜不到），确认要清空？`,
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: `删除全部 ${sources.length} 个`,
+          style: 'destructive',
+          onPress: () => {
+            const snapshot = sources.slice();
+            useStore.getState().removeSources(sources.map((x) => x._id!));
+            setQuery('');
+            setRemoved([]);
+            setPending(null);
+            Alert.alert('已清空', `已删除 ${snapshot.length} 个书源。`, [
+              { text: '知道了' },
+              {
+                text: '撤销删除',
+                onPress: () => {
+                  importSources(snapshot);
+                },
+              },
+            ]);
+          },
+        },
+      ]
+    );
+  };
 
   // —— 书源检测 ——
   const [checking, setChecking] = useState(false);
@@ -68,11 +102,10 @@ export function SourcesScreen() {
   );
   const offCount = sources.length - enabledCount;
 
-  const shown = useMemo(() => {
-    if (filter === 'on') return sources.filter((s) => s._enabled);
-    if (filter === 'off') return sources.filter((s) => !s._enabled);
-    return sources;
-  }, [sources, filter]);
+  const shown = useMemo(
+    () => filterSources(sources, filter, query),
+    [sources, filter, query]
+  );
 
   const enableAll = () => {
     if (sources.length === 0 || enabledCount === sources.length) return;
@@ -117,11 +150,11 @@ export function SourcesScreen() {
     Alert.alert(
       '检测书源',
       `将用关键词「${CHECK_KEYWORD}」逐个检测当前列表里的 ${list.length} 个书源。\n\n` +
-        '· 搜不到书、站点报错、域名连不上 → 自动删除\n' +
-        '· 没有搜索规则（搜不了书）→ 也删除' +
+        '· 搜不到书、站点报错、域名连不上 → 删除\n' +
+        '· 没有搜索规则（搜不了书）→ 删除' +
         (noRule ? `，本次有 ${noRule} 个` : '') +
         '\n' +
-        '· 超时 → 保留（可能只是网络慢）\n' +
+        '· 6 秒没响应（超时）→ 删除\n' +
         (noRule === list.length
           ? '\n⚠️ 当前列表里的书源全都没有搜索规则，检测后会被全部删除。\n'
           : '') +
@@ -324,7 +357,7 @@ export function SourcesScreen() {
 
       <View style={styles.head}>
         <Text style={styles.stat} numberOfLines={1}>
-          {sources.length} 个 · 启用 {enabledCount}
+          {query.trim() ? `找到 ${shown.length} 个` : `${sources.length} 个 · 启用 ${enabledCount}`}
         </Text>
         <View style={styles.headBtns}>
           <TouchableOpacity
@@ -342,6 +375,9 @@ export function SourcesScreen() {
           </TouchableOpacity>
           <TouchableOpacity style={styles.miniPrimary} onPress={() => setModal(true)}>
             <Text style={styles.miniPrimaryText}>导入</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.miniDanger} onPress={clearAll}>
+            <Text style={styles.miniDangerText}>清空</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -368,6 +404,33 @@ export function SourcesScreen() {
         </View>
       )}
 
+      <View style={styles.searchWrap}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="搜索书源：名称 / 网址 / 分组"
+          placeholderTextColor={APP.sub}
+          value={query}
+          onChangeText={setQuery}
+          autoCapitalize="none"
+          autoCorrect={false}
+          spellCheck={false}
+          clearButtonMode="never"
+          returnKeyType="search"
+        />
+        {query ? (
+          <TouchableOpacity
+            style={styles.searchClear}
+            onPress={() => {
+              setQuery('');
+              Keyboard.dismiss();
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Text style={styles.searchClearText}>✕</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
       <View style={styles.filterRow}>
         {(
           [
@@ -388,7 +451,7 @@ export function SourcesScreen() {
 
       <Text style={styles.note}>
         开关打开（已启用）的书源才参与搜索和换源。「检测」会把当前列表试一遍：
-        搜不到书、站点报错、连不上、没有搜索规则的书源自动删除（可撤销），只有超时的保留。
+        搜不到书、站点报错、连不上、超时、没有搜索规则的书源都会删除（可撤销）。
       </Text>
 
       <FlatList
@@ -396,6 +459,8 @@ export function SourcesScreen() {
         keyExtractor={(i) => i._id!}
         renderItem={renderItem}
         contentContainerStyle={styles.list}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         initialNumToRender={12}
         maxToRenderPerBatch={16}
         windowSize={8}
@@ -403,10 +468,16 @@ export function SourcesScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>
-              {sources.length === 0 ? '还没有书源' : '这一栏是空的'}
+              {query.trim()
+                ? `没有匹配「${query.trim()}」的书源`
+                : sources.length === 0
+                ? '还没有书源'
+                : '这一栏是空的'}
             </Text>
             <Text style={styles.emptySub}>
-              {sources.length === 0
+              {query.trim()
+                ? '换个关键词试试，或清空搜索框'
+                : sources.length === 0
                 ? '点右上「导入」可以粘贴 JSON、粘链接，或从「文件」里选 .json'
                 : '切换到「全部」看看其它书源'}
             </Text>
@@ -564,7 +635,7 @@ export function SourcesScreen() {
 
                   {timeout > 0 && (
                     <Text style={styles.repHint}>
-                      超时的书源已保留 —— 可能只是这一刻网络慢，可以稍后单独再测一次。
+                      其中 {timeout} 个是 6 秒没响应被判为超时。如果当时网络不好，可以撤销后重测一次。
                     </Text>
                   )}
                 </>
@@ -630,7 +701,7 @@ const styles = StyleSheet.create({
   headBtns: { flexDirection: 'row', alignItems: 'center' },
   miniBtn: {
     backgroundColor: APP.card,
-    paddingHorizontal: 11,
+    paddingHorizontal: 9,
     paddingVertical: 7,
     borderRadius: 8,
     marginLeft: 6,
@@ -640,12 +711,37 @@ const styles = StyleSheet.create({
   miniText: { color: APP.text, fontSize: 13 },
   miniPrimary: {
     backgroundColor: APP.accent,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 8,
     marginLeft: 6,
   },
   miniPrimaryText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  miniDanger: {
+    backgroundColor: APP.card,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 8,
+    marginLeft: 6,
+    borderWidth: 1,
+    borderColor: APP.danger,
+  },
+  miniDangerText: { color: APP.danger, fontSize: 13, fontWeight: '600' },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginBottom: 10,
+    paddingHorizontal: 12,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: APP.card,
+    borderWidth: 1,
+    borderColor: APP.border,
+  },
+  searchInput: { flex: 1, color: APP.text, fontSize: 14, padding: 0 },
+  searchClear: { paddingLeft: 8 },
+  searchClearText: { color: APP.sub, fontSize: 15 },
   filterRow: {
     flexDirection: 'row',
     paddingHorizontal: 16,

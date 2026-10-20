@@ -36,12 +36,17 @@ export function BookDetailScreen() {
   } = route.params as any;
 
   const sources = useStore((s) => s.sources);
+  const shelf = useStore((s) => s.shelf);
   const addToShelf = useStore((s) => s.addToShelf);
   const cacheChapters = useStore((s) => s.cacheChapters);
+  const onShelf = shelf.some((x) => x.bookUrl === bookUrl && x.sourceId === sourceId);
 
   const [info, setInfo] = useState<BookInfo | null>(null);
   const [loading, setLoading] = useState(false);
-  const [localChapters, setLocalChapters] = useState<BookChapter[] | null>(null);
+  const [chapters, setChapters] = useState<BookChapter[]>([]);
+  const [tocLoading, setTocLoading] = useState(false);
+  const [tocErr, setTocErr] = useState('');
+  const [showAllChapters, setShowAllChapters] = useState(false);
   const [switchOpen, setSwitchOpen] = useState(false);
 
   useEffect(() => {
@@ -49,19 +54,36 @@ export function BookDetailScreen() {
     const load = async () => {
       if (sourceId === LOCAL_SOURCE_ID) {
         const ch = (await getLocalChapters(bookUrl)) as BookChapter[];
-        if (!cancel) setLocalChapters(ch);
+        if (!cancel) setChapters(ch);
         return;
       }
       const src = sources.find((s) => s.bookSourceUrl === sourceId);
       if (!src) return;
       setLoading(true);
+      let tocUrl = bookUrl as string;
       try {
         const bi = await getBookInfo(src, bookUrl);
         if (!cancel && bi) setInfo(bi);
+        tocUrl = ((bi && bi.tocUrl) || bookUrl) as string;
       } catch (e) {
         if (!cancel) setInfo(null);
       } finally {
         if (!cancel) setLoading(false);
+      }
+      if (cancel) return;
+
+      // 详情页直接展示目录，用户先看得到章节目录再决定读不读
+      setTocLoading(true);
+      setTocErr('');
+      try {
+        const ch = await getToc(src, tocUrl, bookUrl);
+        if (cancel) return;
+        setChapters(ch);
+        if (!ch.length) setTocErr('这个书源没解析出目录，换一个源试试');
+      } catch (e: any) {
+        if (!cancel) setTocErr(e?.message || '目录加载失败');
+      } finally {
+        if (!cancel) setTocLoading(false);
       }
     };
     load();
@@ -70,54 +92,43 @@ export function BookDetailScreen() {
     };
   }, [bookUrl, sourceId]);
 
-  const startRead = async () => {
-    try {
-      let chapters: BookChapter[] = [];
-      if (sourceId === LOCAL_SOURCE_ID) {
-        chapters = (await getLocalChapters(bookUrl)) as BookChapter[];
-      } else {
-        const src = sources.find((s) => s.bookSourceUrl === sourceId);
-        if (!src) throw new Error('未找到对应书源');
-        const tocUrl = (info?.tocUrl || bookUrl) as string;
-        setLoading(true);
-        try {
-          chapters = await getToc(src, tocUrl, bookUrl);
-        } finally {
-          setLoading(false);
-        }
-        if (chapters.length === 0) {
-          throw new Error(
-            `这本书的目录没解析出来。\n\n书源：${src.bookSourceName}\n目录页：${shortUrl(
-              tocUrl
-            )}\n\n多半是这个书源的目录规则失效了，换个书源试试。`
-          );
-        }
-        cacheChapters(bookUrl, sourceId, chapters);
-      }
-      addToShelf({
-        bookUrl,
-        sourceId,
-        name: info?.name || name,
-        author: info?.author || author,
-        coverUrl: info?.coverUrl || coverUrl,
-        intro: info?.intro || intro,
-        lastChapter: info?.lastChapter || lastChapter,
-        addedAt: Date.now(),
-        lastReadAt: Date.now(),
-        lastChapterIndex: 0,
-        lastReadPos: 0,
-      });
-      navigation.navigate('Reader', {
-        bookUrl,
-        sourceId,
-        name: info?.name || name,
-        author: info?.author || author,
-        chapterIndex: chapterIndex || 0,
-        pageIndex: pageIndex || 0,
-      });
-    } catch (e: any) {
-      Alert.alert('打开失败', e?.message || String(e));
+  // 阅读：只进阅读器，**不自动加书架**。要不要收藏由用户点「加入书架」决定。
+  const openReader = (idx: number) => {
+    if (!chapters.length) {
+      Alert.alert('打不开', tocErr || '目录还没加载出来，稍等一下或换个书源');
+      return;
     }
+    const start = Math.min(Math.max(idx, 0), chapters.length - 1);
+    navigation.navigate('Reader', {
+      bookUrl,
+      sourceId,
+      name: displayName,
+      author: displayAuthor,
+      chapterIndex: start,
+      pageIndex: 0,
+      // 目录已经拉过了，直接带过去，省一次请求
+      preloadedChapters: chapters,
+      preloadedSourceId: sourceId,
+      preloadedBookUrl: bookUrl,
+    });
+  };
+
+  const addOnly = () => {
+    if (onShelf) return;
+    addToShelf({
+      bookUrl,
+      sourceId,
+      name: displayName,
+      author: displayAuthor,
+      coverUrl: displayCover,
+      intro: displayIntro,
+      lastChapter: info?.lastChapter || lastChapter,
+      addedAt: Date.now(),
+      lastReadAt: Date.now(),
+      lastChapterIndex: 0,
+      lastReadPos: 0,
+    });
+    if (chapters.length) cacheChapters(bookUrl, sourceId, chapters);
   };
 
   // 换源 = 用新源的 bookUrl 重新加载这个详情页。replace 而不是 push，
@@ -172,20 +183,68 @@ export function BookDetailScreen() {
         <Text style={styles.section}>简介</Text>
         <Text style={styles.intro}>{displayIntro || '（无简介）'}</Text>
 
-        {localChapters && (
-          <Text style={styles.section}>目录 · 共 {localChapters.length} 章</Text>
-        )}
         {loading && (
           <View style={styles.loadWrap}>
             <ActivityIndicator color={APP.accent} />
             <Text style={styles.hint}>加载详情中…</Text>
           </View>
         )}
+
+        {/* 目录：进页面就拉好，让用户先看清有多少章、能不能读 */}
+        <Text style={styles.section}>
+          目录{chapters.length ? ` · 共 ${chapters.length} 章` : ''}
+        </Text>
+        {tocLoading && (
+          <View style={styles.tocLoading}>
+            <ActivityIndicator color={APP.accent} size="small" />
+            <Text style={styles.hint}>正在解析目录…</Text>
+          </View>
+        )}
+        {!tocLoading && !!tocErr && (
+          <Text style={styles.tocErr}>{tocErr}</Text>
+        )}
+        {!tocLoading &&
+          (showAllChapters ? chapters : chapters.slice(0, 100)).map((c, i) => (
+            <TouchableOpacity
+              key={`${c.index}-${i}`}
+              style={styles.chRow}
+              onPress={() => openReader(i)}
+            >
+              <Text style={styles.chText} numberOfLines={1}>
+                {c.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        {!tocLoading && chapters.length > 100 && (
+          <TouchableOpacity
+            style={styles.moreBtn}
+            onPress={() => setShowAllChapters((v) => !v)}
+          >
+            <Text style={styles.moreText}>
+              {showAllChapters ? '收起' : `展开全部 ${chapters.length} 章`}
+            </Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
-      <TouchableOpacity style={styles.readBtn} onPress={startRead}>
-        <Text style={styles.readText}>加入书架并开始阅读</Text>
-      </TouchableOpacity>
+      <View style={styles.bottomBar}>
+        <TouchableOpacity
+          style={[styles.shelfBtn, onShelf && styles.shelfBtnOn]}
+          onPress={addOnly}
+          disabled={onShelf}
+        >
+          <Text style={[styles.shelfText, onShelf && styles.shelfTextOn]}>
+            {onShelf ? '✓ 已在书架' : '＋ 加入书架'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.readBtn, !chapters.length && { opacity: 0.5 }]}
+          onPress={() => openReader(chapterIndex || 0)}
+          disabled={!chapters.length}
+        >
+          <Text style={styles.readText}>开始阅读</Text>
+        </TouchableOpacity>
+      </View>
 
       <SourceSwitchSheet
         visible={switchOpen}
@@ -217,14 +276,41 @@ const styles = StyleSheet.create({
   intro: { color: APP.sub, fontSize: 14, lineHeight: 22 },
   loadWrap: { alignItems: 'center', marginTop: 20 },
   hint: { color: APP.sub, fontSize: 14, marginTop: 8 },
+  bottomBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    paddingTop: 8,
+    backgroundColor: APP.bg,
+    borderTopWidth: 1,
+    borderColor: APP.border,
+  },
+  shelfBtn: {
+    flex: 1,
+    marginRight: 8,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: APP.card,
+    borderWidth: 1,
+    borderColor: APP.border,
+  },
+  shelfBtnOn: { backgroundColor: APP.card2 },
+  shelfText: { color: APP.text, fontSize: 16, fontWeight: '700' },
+  shelfTextOn: { color: APP.sub },
   readBtn: {
+    flex: 1.4,
     backgroundColor: APP.accent,
-    margin: 16,
-    marginTop: 0,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
   },
+  tocLoading: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+  tocErr: { color: APP.danger, fontSize: 13, lineHeight: 19, marginTop: 4 },
+  chRow: { paddingVertical: 10, borderBottomWidth: 1, borderColor: APP.border },
+  chText: { color: APP.text, fontSize: 14 },
+  moreBtn: { alignItems: 'center', paddingVertical: 12 },
+  moreText: { color: APP.accent, fontSize: 14, fontWeight: '600' },
   readText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   switchBtn: {
     marginTop: 12,

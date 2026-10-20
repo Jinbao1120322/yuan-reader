@@ -18,12 +18,11 @@ import { BookSource } from '../engine/types';
  *   http    站点报 4xx/5xx、或者根本连不上 → 删
  *   net     域名解析失败 / 连接被拒 / TLS 失败 → 删
  *   notoc   能搜到但取不到目录（深度检测才有）→ 删
- *   timeout 6 秒内没响应 → **不删**
+ *   timeout 6 秒内没响应 → 删
  *   skip    没有搜索规则 → 删（这种源本来就搜不了书，留着占位）
  *
- * 超时不删是有意的：超时可能只是这一刻网络慢或者站点临时抽风，
- * 一次抖动就删掉几百个源不可接受。真正死掉的域名通常表现为 DNS 失败或
- * 连接被拒（net），这部分照样会被清掉。
+ * 注意：超时也算无效。6 秒都回不来结果的源，实际用的时候同样是卡住的，
+ * 留着只会拖慢每次搜索。（早期版本为了防网络抖动误删曾保留超时源，已按用户要求改回删除）
  */
 
 export type Verdict =
@@ -46,7 +45,7 @@ export interface CheckItem {
 }
 
 /** 这些判定结果属于「确定没用」，检测后自动删除 */
-export const REMOVABLE: Verdict[] = ['empty', 'http', 'net', 'notoc', 'skip'];
+export const REMOVABLE: Verdict[] = ['empty', 'http', 'net', 'notoc', 'skip', 'timeout'];
 
 export const VERDICT_LABEL: Record<Verdict, string> = {
   ok: '有效',
