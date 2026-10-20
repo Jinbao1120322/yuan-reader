@@ -17,6 +17,7 @@ import { paginate } from '../utils/paginate';
 import { SourceSwitchSheet } from '../components/SourceSwitchSheet';
 import { SearchBook } from '../engine/types';
 import { matchChapterIndex } from '../utils/bookMatch';
+import { useAppFont } from '../components/AppText';
 import {
   pageTextHeight,
   pageTextWidth,
@@ -198,6 +199,10 @@ export function ReaderScreen() {
     isPaged ? routePageIndex || 0 : 0
   );
   const [area, setArea] = useState({ w: 0, h: 0 });
+  // 实测「一行能放几个字」。字体不同字宽差很多，靠估算必然失准
+  // （换自定义字体后估 17 字、实际只放得下 16 字，每行最后一个字被挤到下一行单独成行）。
+  const [charsPerLine, setCharsPerLine] = useState(0);
+  const appFont = useAppFont();
   const pendingPageIndex = useRef<number | null>(null); // -1 表示定位到本章末页
   // 滚动模式：保存的阅读进度是 0~1000 的百分比，首次进入时恢复到该位置
   const scrollRestoreFrac = useRef<number | null>(
@@ -345,9 +350,19 @@ export function ReaderScreen() {
       lineHeight: settings.lineHeight,
       width: pageTextWidth(area.w),
       height: pageTextHeight(area.h),
+      charsPerLine,
     });
     // 换字体后行高和字宽都会变，必须重新分页，否则每页行数对不上
-  }, [content, area.w, area.h, settings.fontSize, settings.lineHeight, settings.fontId, isPaged]);
+  }, [
+    content,
+    area.w,
+    area.h,
+    settings.fontSize,
+    settings.lineHeight,
+    settings.fontId,
+    charsPerLine,
+    isPaged,
+  ]);
 
   // 章节内容/排版变化后，按 pending 定位当前页（翻章时跳到首/末页），并持久化进度
   useEffect(() => {
@@ -455,6 +470,38 @@ export function ReaderScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
+      {/* 排版标定：用当前真实字体渲染一行，数出「一行到底能放几个字」。
+          opacity 0 + 绝对定位，不参与布局也不用 pointerEvents 处理。 */}
+      {area.w > 0 && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: pageTextWidth(area.w),
+            opacity: 0,
+          }}
+        >
+          <Text
+            key={`ruler-${settings.fontSize}-${settings.lineHeight}-${appFont || 'sys'}-${Math.round(area.w)}`}
+            style={{
+              fontSize: settings.fontSize,
+              lineHeight: settings.fontSize * settings.lineHeight,
+            }}
+            onTextLayout={(e: any) => {
+              const ls = e && e.nativeEvent && e.nativeEvent.lines;
+              if (!ls || !ls.length) return;
+              const n = (ls[0].text || '').length;
+              // 少于 4 个说明宽度异常，别拿它去分页
+              if (n >= 4 && n !== charsPerLine) setCharsPerLine(n);
+            }}
+          >
+            {'汉'.repeat(80)}
+          </Text>
+        </View>
+      )}
+
       <Animated.View
         style={{ opacity: barsOpacity }}
         pointerEvents={barsVisible ? 'auto' : 'none'}

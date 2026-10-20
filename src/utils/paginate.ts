@@ -19,6 +19,12 @@ export interface PaginateOpts {
   lineHeight: number;
   width: number; // 可排印区宽度（已扣左右内边距）
   height: number; // 可排印区高度（已扣上下留白）
+  /**
+   * 实测「一行能放几个字」。
+   * 靠字宽估算在不同字体下会失准（用户换了自定义字体后，估算 17 字实际只放得下 16 字，
+   * 第 17 个字就被挤到下一行单独成行）。有实测值就以实测值为准。
+   */
+  charsPerLine?: number;
 }
 
 /**
@@ -33,7 +39,10 @@ export function paginate(text: string, opts: PaginateOpts): string[] {
   if (!text || width <= 0 || height <= 0 || fontSize <= 0) return [''];
 
   const charW = fontSize * CHAR_W_RATIO;
-  const charsPerLine = Math.max(1, Math.floor(width / charW));
+  const charsPerLine =
+    opts.charsPerLine && opts.charsPerLine > 0
+      ? Math.floor(opts.charsPerLine)
+      : Math.max(1, Math.floor(width / charW));
   const lineH = fontSize * lineHeight;
   const linesPerPage = Math.max(1, Math.floor(height / lineH));
 
