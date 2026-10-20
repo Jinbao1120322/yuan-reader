@@ -14,11 +14,11 @@ end
 block = <<~RUBY
 
   # [yuan-reader] fmt-cxx17-fix: 规避 Xcode 26 clang consteval bug (RN 0.79 内置 fmt 11.x)
-  # 插在 post_install 块末尾，确保在 react_native_post_install 之后执行
-  installer.pods_project.build_configurations.each do |c|
-    c.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
-  end
+  # 只给 fmt 降 c++17；React 自身代码用到 C++20 的 std::unordered_set::contains，
+  # 不能全局降 c++17（否则 PerformanceObserver.cpp 报 'no member named contains'）。
+  # 必须位于 react_native_post_install 之后，否则被 RN 覆盖回 c++20。
   installer.pods_project.targets.each do |t|
+    next unless t.name == 'fmt'
     t.build_configurations.each do |c|
       c.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
     end
