@@ -72,16 +72,29 @@ export function guessTocUrl(html: string, baseUrl: string): string | null {
       const text = ($el.text() || '').replace(/\s+/g, ' ').trim();
       const href = $el.attr('href') || '';
       if (!href || /^(javascript:|#|mailto:)/i.test(href)) return;
+
       let score = 0;
-      if (/目录|章节列表|全部章节|章节目录|查看目录/.test(text)) score += 10;
-      if (/list|chapter|mulu|catalog|index/i.test(href)) score += 5;
+      // 文案明确说是目录的，最可信
+      if (/目录|章节列表|全部章节|章节目录|查看目录|所有章节/.test(text)) score += 12;
+      // 很多站详情页的入口写的是「点击阅读 / 开始阅读」，点进去其实就是目录
+      else if (/点击阅读|开始阅读|继续阅读|立即阅读|从头阅读|免费阅读/.test(text)) score += 8;
+
+      // 路径里出现 list/mulu/index/chapter，要是独立路径段才算，
+      // 否则 newslist.php 这种也会命中，把新闻列表当成目录（真实踩过）。
+      if (/(?:^|\/)(list|mulu|catalog|index|chapterlist)(?:[\/._-]|$)/i.test(href)) score += 6;
+      else if (/chapter|mulu|catalog/i.test(href)) score += 3;
+
+      // 明显不是目录的，扣分
+      if (/news|article|search|login|user|register|about|help|contact/i.test(href)) score -= 6;
+      if (/新闻|公告|登录|注册|搜索/.test(text)) score -= 6;
+
       if (text.length > 0 && text.length <= 10) score += 1;
       if (score > bestScore) {
         bestScore = score;
         bestUrl = resolveUrl(href, baseUrl);
       }
     });
-    return bestScore >= 5 ? bestUrl : null;
+    return bestScore >= 6 ? bestUrl : null;
   } catch {
     return null;
   }
