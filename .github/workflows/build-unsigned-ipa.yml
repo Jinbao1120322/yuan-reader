@@ -7,10 +7,20 @@ on:
 
 jobs:
   build-ipa:
-    runs-on: macos-latest
+    # 必须用 macOS 15（默认 Xcode 16.4 / iOS 18.5 SDK）。
+    # 原因：iOS 26 起，链接 iOS 26 SDK 的 App 强制要求 UIScene 生命周期，
+    # RN 0.79 尚未支持 → 在 iOS 26 真机上启动即白屏。用 iOS 18 SDK 链接可规避。
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select Xcode 16.4 (iOS 18 SDK)
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app
+          xcodebuild -version
+          echo "--- iphoneos SDKs ---"
+          xcodebuild -showsdks | grep -i iphoneos || true
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -79,6 +89,24 @@ jobs:
           # 在 ios/ 内 zip，保证 ipa 结构是 Payload/app.app；输出到仓库根目录
           zip -r "../yuan-reader-v${{ steps.ver.outputs.version }}.ipa" Payload
           ls -lh "../yuan-reader-v${{ steps.ver.outputs.version }}.ipa"
+
+      - name: Assert built against iOS 18 SDK (guard against UIScene white screen)
+        run: |
+          set -e
+          APP=$(find ios/build/App.xcarchive/Products/Applications -maxdepth 1 -name '*.app' | head -n1)
+          echo "app bundle: $APP"
+          SDK=$(/usr/libexec/PlistBuddy -c "Print :DTSDKName" "$APP/Info.plist")
+          echo "DTSDKName = $SDK"
+          case "$SDK" in
+            iphoneos18.*|iphoneos17.*|iphoneos16.*)
+              echo "OK: linked against pre-iOS26 SDK, no UIScene requirement on iOS 26 devices"
+              ;;
+            *)
+              echo "ERROR: 链接到 $SDK —— iOS 26 会强制 UIScene，RN 0.79 不支持，真机必白屏。"
+              echo "请确认 Xcode 已切到 16.4（iOS 18 SDK）。"
+              exit 1
+              ;;
+          esac
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
