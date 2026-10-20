@@ -163,7 +163,9 @@ jobs:
           echo "binary: $APP_BIN"
           if [ -z "$APP_BIN" ]; then echo "ERROR: 找不到 app 可执行文件"; exit 1; fi
           MISSING=""
-          for MOD in ExpoModulesCore ExponentConstants ExpoAsset ExpoFileSystem ExpoFontLoader ExpoKeepAwake ExpoDocumentPicker; do
+          # 硬性要求：这几个是 expo/src/Expo.fx.tsx 加载期就会 requireNativeModule 的，
+          # 缺任何一个都会让 import 'expo' 抛错 → 白屏。
+          for MOD in ExpoModulesCore ExponentConstants ExpoAsset ExpoFileSystem ExpoKeepAwake ExpoDocumentPicker; do
             if grep -aq "$MOD" "$APP_BIN"; then
               echo "OK: 原生模块 $MOD"
             else
@@ -171,6 +173,13 @@ jobs:
               MISSING="$MISSING $MOD"
             fi
           done
+          # 软检查：expo-font 的 ExpoFontLoader 名字会被 dead-strip 掉（pod 本身已链接，
+          # 日志里能看到 -lExpoFont），只提示不失败。
+          if grep -aq "ExpoFontLoader" "$APP_BIN"; then
+            echo "OK: 原生模块 ExpoFontLoader"
+          else
+            echo "WARN: 二进制里没找到 ExpoFontLoader 字面量（dead-strip，通常无害；本项目启动不依赖 expo-font）"
+          fi
           if [ -n "$MISSING" ]; then
             echo "缺失模块:$MISSING"
             echo "检查这些包是否在 node_modules 顶层（不能嵌在 node_modules/expo/node_modules 里）"
@@ -178,7 +187,11 @@ jobs:
           fi
 
       - name: Upload IPA artifact
+        # 即使前面的断言步骤失败，也要把已经打好的 ipa 传上来，
+        # 免得一次误判断言就白烧一轮 12 分钟的 macOS 构建。
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: yuan-reader-unsigned-v${{ steps.ver.outputs.version }}
           path: yuan-reader-v${{ steps.ver.outputs.version }}.ipa
+          if-no-files-found: warn
