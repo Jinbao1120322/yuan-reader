@@ -19,10 +19,9 @@
  *   看不到圆点 = JS 根本没跑起来（原生/引擎层问题，与 React 代码无关）
  */
 import React from 'react';
-import { registerRootComponent } from 'expo';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, AppRegistry } from 'react-native';
 
-const BOOT_TAG = 'v1.0.3';
+const BOOT_TAG = 'v1.0.4';
 
 function describeError(e) {
   if (!e) return '未知错误（throw 了空值）';
@@ -33,7 +32,7 @@ function describeError(e) {
 }
 
 // 每个 App 构建都会修改这个值，用来确认用户装的是哪一版
-const BUILD_STAMP = '1.0.3.4';
+const BUILD_STAMP = '1.0.4.5';
 
 // ---------------------------------------------------------------------------
 // 1. 加载期保护：require('./App') 失败也不至于白屏
@@ -116,6 +115,13 @@ function Boot() {
 
       {/* 启动探针：在 App 之外渲染，与 App 是否正常无关 */}
       <View pointerEvents="none" style={s.probe} />
+
+      {/* expo 入口挂了但兜底成功时，明确标出来，免得"看起来正常"却其实是降级跑 */}
+      {expoImportError ? (
+        <Text pointerEvents="none" style={s.expoWarn}>
+          expo 入口异常，已用 AppRegistry 兜底
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -134,12 +140,51 @@ const s = StyleSheet.create({
     width: 16,
     height: 16,
     borderRadius: 8,
-    // 颜色随版本变化，方便从截图确认用户装的是哪一版：v1.0.3 = 橙色
-    backgroundColor: '#ff9500',
+    // 颜色随版本变化，方便从截图确认用户装的是哪一版：v1.0.4 = 青色
+    backgroundColor: '#00e5ff',
+  },
+  expoWarn: {
+    position: 'absolute',
+    left: 10,
+    bottom: 34,
+    fontSize: 10,
+    color: '#ff6b6b',
   },
 });
 
 // 让构建产物的标识可被核对（不参与渲染）
 Boot.buildStamp = BUILD_STAMP;
 
-registerRootComponent(Boot);
+// ---------------------------------------------------------------------------
+// 3. 注册入口
+//
+// 这里刻意**不再**用顶层 `import { registerRootComponent } from 'expo'`：
+// 那行静态 import 会把整个 expo 包的启动代码（Expo.fx / expo-modules-core 的
+// 全局注入）提前求值，它一旦在加载期抛错，本文件后面所有代码都不会执行，
+// 屏幕就是纯白——而且因为还没注册任何组件，连错误边界都来不及生效。
+//
+// 现在改成：优先走 expo.registerRootComponent；它挂了就退到 react-native 自带的
+// AppRegistry 直接注册 "main"（RN 的根视图会自己 runApplication，
+// 这条路径不依赖 expo 的任何启动逻辑）。
+// ---------------------------------------------------------------------------
+let expoImportError = null;
+let registeredVia = 'unknown';
+
+function registerRoot() {
+  try {
+    const expo = require('expo');
+    if (expo && typeof expo.registerRootComponent === 'function') {
+      expo.registerRootComponent(Boot);
+      registeredVia = 'expo.registerRootComponent';
+      return;
+    }
+    throw new Error('expo.registerRootComponent 不存在（module keys: ' + Object.keys(expo || {}).join(',') + '）');
+  } catch (e) {
+    expoImportError = e;
+    console.warn('[yuan-reader] expo 入口不可用，退回 AppRegistry：', e);
+  }
+  AppRegistry.registerComponent('main', () => Boot);
+  registeredVia = 'AppRegistry(兜底)';
+}
+
+registerRoot();

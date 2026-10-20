@@ -44,33 +44,34 @@ jobs:
           EXPO_NO_TELEMETRY: '1'
         run: npx expo prebuild --platform ios --no-install
 
-      # 原生探针 + 诊断信息
-      # 把 window 背景改成品红色：如果 JS 连引擎都没跑起来（React 什么都没渲染），
-      # 屏幕上看到的就是品红而不是纯白。这样一次装机即可区分「JS 挂了」和
-      # 「React 渲染成空」，不必再靠猜。App 正常时这个背景会被完全覆盖，看不出来。
-      # 同时把 AppDelegate 全文打进日志，便于核对根视图装配方式。
-      - name: Native probe (magenta window) and dump AppDelegate
+      # 原生探针：把「纯白屏」拆成可分辨的三态
+      #   看得到黄色横幅 → 窗口确实上屏了（排除启动图卡住 / 场景问题）
+      #   横幅变红「JS 未挂载」→ 窗口正常、JS 一根手指都没渲染
+      #   横幅变绿「JS 已挂载」→ JS 挂上了，问题在 JS 渲染的内容
+      # 横幅上还会打印 bundle 大小 / magic，并在 RCTFatal 时显示错误原文，
+      # 这样不需要 Mac、不需要真机日志也能定位。注入失败直接让本步失败。
+      - name: Native probe (diagnostic band) and dump AppDelegate + splash
         run: |
-          set +e
+          set -e
           f=$(find ios -maxdepth 4 \( -name 'AppDelegate.swift' -o -name 'AppDelegate.mm' \) | head -n1)
           echo "AppDelegate path: ${f:-<not found>}"
-          if [ -z "$f" ]; then echo "WARN: AppDelegate not found, skip probe"; exit 0; fi
+          test -n "$f" || { echo "ERROR: AppDelegate 没找到"; exit 1; }
+
           echo "----- AppDelegate BEGIN -----"
           cat "$f"
           echo "----- AppDelegate END -----"
-          cp "$f" "$f.bak"
-          if grep -q 'UIWindow(frame:' "$f"; then
-            perl -0pi -e 's/(window = UIWindow\(frame:[^\n]*\n)/$1    window?.backgroundColor = UIColor.magenta\n/' "$f"
-            echo "swift patched: $(grep -c 'UIColor.magenta' "$f")"
-          elif grep -q 'UIWindow alloc' "$f"; then
-            perl -0pi -e 's/(self\.window = \[\[UIWindow alloc\][^\n]*\n)/$1  self.window.backgroundColor = [UIColor magentaColor];\n/' "$f"
-            echo "objc patched: $(grep -c 'magentaColor' "$f")"
-          else
-            echo "WARN: no known UIWindow pattern, keep original"
-            cp "$f.bak" "$f"
-          fi
-          if cmp -s "$f" "$f.bak"; then echo "PROBE: not applied"; else echo "PROBE: applied"; fi
-          exit 0
+
+          node scripts/probe_appdelegate.js "$f"
+
+          echo "--- 注入后复查 ---"
+          grep -n "YRProbe.install(on: w)" "$f"
+          grep -n "RCTSetFatalHandler" "$f"
+          grep -n "final class YRProbe" "$f"
+
+          echo "--- 启动图（纯白屏的另一半嫌疑：启动图卡住不撤）---"
+          find ios -maxdepth 4 -iname '*splash*' -print || true
+          cat ios/app/SplashScreen.storyboard 2>/dev/null | head -40 || true
+          cat ios/app/Images.xcassets/SplashScreenBackground.colorset/Contents.json 2>/dev/null || true
 
       - name: Patch Podfile (fmt c++17 for Xcode 26 clang) and install pods
         run: |
@@ -141,10 +142,16 @@ jobs:
           BUNDLE=$(find ios/build/App.xcarchive/Products/Applications -maxdepth 2 -name 'main.jsbundle' | head -n1)
           echo "bundle: $BUNDLE"
           if [ -z "$BUNDLE" ]; then echo "ERROR: main.jsbundle 不存在"; exit 1; fi
-          if grep -aq '#ff9500' "$BUNDLE"; then
-            echo "OK: bundle 含 v1.0.3 引导层探针色，确认新代码已打进包"
+          if grep -aq '#00e5ff' "$BUNDLE"; then
+            echo "OK: bundle 含 v1.0.4 引导层探针色"
           else
-            echo "ERROR: bundle 不含引导层探针色 #ff9500 —— 打包用的是旧 index.js"
+            echo "ERROR: bundle 不含探针色 #00e5ff —— 打包用的是旧 index.js"
+            exit 1
+          fi
+          if grep -aq '1.0.4.5' "$BUNDLE"; then
+            echo "OK: bundle 含版本戳 1.0.4.5"
+          else
+            echo "ERROR: bundle 不含版本戳 1.0.4.5"
             exit 1
           fi
 

@@ -2,13 +2,13 @@
   "expo": {
     "name": "源阅读",
     "slug": "yuan-reader",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "scheme": "yuanreader",
     "userInterfaceStyle": "automatic",
     "splash": {
       "resizeMode": "contain",
-      "backgroundColor": "#1a1a1a"
+      "backgroundColor": "#00ff00"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.yuan.reader",
-      "buildNumber": "4",
+      "buildNumber": "5",
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
@@ -25,7 +25,7 @@
     },
     "android": {
       "package": "com.yuan.reader",
-      "versionCode": 3
+      "versionCode": 4
     },
     "web": {
       "bundler": "metro"
