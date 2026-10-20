@@ -36,10 +36,20 @@ jobs:
       - name: Build unsigned archive
         run: |
           cd ios
-          WS=$(ls *.xcworkspace | head -n1)
-          SCHEME=$(basename "$WS" .xcworkspace)
+          set -e
+          WS=$(find . -maxdepth 1 -name '*.xcworkspace' | head -n1)
+          WS_NAME=$(basename "$WS")
+          echo "Detected workspace: $WS_NAME"
+          if [ -z "$WS_NAME" ]; then
+            echo "ERROR: no .xcworkspace found in $(pwd)"; ls -la; exit 1
+          fi
+          SCHEME=$(xcodebuild -list -workspace "$WS_NAME" 2>/dev/null | awk '/Schemes:/{f=1;next} f && NF{print $1; exit}')
+          echo "Detected scheme: $SCHEME"
+          if [ -z "$SCHEME" ]; then
+            echo "ERROR: no scheme found"; xcodebuild -list -workspace "$WS_NAME"; exit 1
+          fi
           xcodebuild \
-            -workspace "$WS" \
+            -workspace "$WS_NAME" \
             -scheme "$SCHEME" \
             -configuration Release \
             -archivePath build/App.xcarchive \
