@@ -1,10 +1,10 @@
 import 'react-native-gesture-handler';
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
-import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
+import { SafeAreaProvider, initialWindowMetrics, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 
@@ -47,6 +47,9 @@ const navTheme = {
 };
 
 function TabNavigator() {
+  // 标签栏高度必须把底部 home indicator 的 inset 算进去，
+  // 否则写死 64 会把图标/文字压到手势区上。
+  const insets = useSafeAreaInsets();
   return (
     <Tab.Navigator
       screenOptions={{
@@ -55,8 +58,9 @@ function TabNavigator() {
         tabBarStyle: {
           backgroundColor: APP.card,
           borderTopColor: APP.border,
-          height: 64,
-          paddingBottom: 8,
+          height: 52 + insets.bottom,
+          paddingTop: 6,
+          paddingBottom: insets.bottom,
         },
         tabBarActiveTintColor: APP.accent,
         tabBarInactiveTintColor: APP.sub,
@@ -86,26 +90,10 @@ export default function App() {
           </NavigationContainer>
         </ErrorBoundary>
       </SafeAreaProvider>
-
-      {/*
-        启动探针：在 SafeAreaProvider 之外、作为兄弟节点渲染。
-        能看到这个绿点 = JS 引擎已运行且 React 已挂载出原生视图；
-        看不到 = JS 根本没跑起来（那是引擎/原生层问题，与 React 代码无关）。
-      */}
-      <View pointerEvents="none" style={styles.probe} />
     </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: APP.bg },
-  probe: {
-    position: 'absolute',
-    right: 10,
-    bottom: 10,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#19c37d',
-  },
 });

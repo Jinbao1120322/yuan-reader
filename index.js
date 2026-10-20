@@ -21,7 +21,7 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, AppRegistry } from 'react-native';
 
-const BOOT_TAG = 'v1.0.5';
+const BOOT_TAG = 'v1.0.6';
 
 function describeError(e) {
   if (!e) return '未知错误（throw 了空值）';
@@ -32,7 +32,7 @@ function describeError(e) {
 }
 
 // 每个 App 构建都会修改这个值，用来确认用户装的是哪一版
-const BUILD_STAMP = '1.0.5.6';
+const BUILD_STAMP = '1.0.6.7';
 
 // ---------------------------------------------------------------------------
 // 1. 加载期保护：require('./App') 失败也不至于白屏
@@ -113,9 +113,6 @@ function Boot() {
         </RenderGuard>
       )}
 
-      {/* 启动探针：在 App 之外渲染，与 App 是否正常无关 */}
-      <View pointerEvents="none" style={s.probe} />
-
       {/* expo 入口挂了但兜底成功时，明确标出来，免得"看起来正常"却其实是降级跑 */}
       {expoImportError ? (
         <Text pointerEvents="none" style={s.expoWarn}>
@@ -133,16 +130,6 @@ const s = StyleSheet.create({
   title: { color: '#ff6b6b', fontSize: 18, fontWeight: '700', marginBottom: 8 },
   hint: { color: '#e0a0a0', fontSize: 12, marginBottom: 16 },
   err: { color: '#ffd4d4', fontSize: 11, lineHeight: 16 },
-  probe: {
-    position: 'absolute',
-    right: 10,
-    bottom: 10,
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    // 颜色随版本变化，方便从截图确认用户装的是哪一版：v1.0.5 = 紫色
-    backgroundColor: '#af52de',
-  },
   expoWarn: {
     position: 'absolute',
     left: 10,

@@ -14,6 +14,7 @@ import { useStore } from '../store/useStore';
 import { BookSource } from '../engine/types';
 import { SAMPLE_SOURCE } from '../sources/sampleSource';
 import { APP } from '../theme/theme';
+import { TopBar } from '../components/TopBar';
 
 export function SourcesScreen() {
   const sources = useStore((s) => s.sources);
@@ -87,6 +88,8 @@ export function SourcesScreen() {
 
   return (
     <View style={styles.container}>
+      {/* 顶部栏负责吃 top inset，否则内容会画到状态栏/灵动岛下面 */}
+      <TopBar title="书源" />
       <View style={styles.summary}>
         <Text style={styles.summaryText}>
           共 {sources.length} 个 · 启用 {enabledCount} 个

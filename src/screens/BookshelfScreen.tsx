@@ -11,6 +11,7 @@ import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useStore, ShelfBook } from '../store/useStore';
 import { BookCover } from '../components/BookCover';
+import { TopBar } from '../components/TopBar';
 import { APP } from '../theme/theme';
 import { importLocalTxt } from '../utils/localBook';
 
@@ -96,6 +97,15 @@ export function BookshelfScreen() {
 
   return (
     <View style={styles.container}>
+      {/* 顶部栏负责吃 top inset（灵动岛/状态栏），否则列表会画到状态栏底下 */}
+      <TopBar
+        title="书架"
+        right={
+          <TouchableOpacity onPress={() => navigation.navigate('Search')}>
+            <Text style={styles.topAction}>搜索</Text>
+          </TouchableOpacity>
+        }
+      />
       <FlatList
         data={shelf}
         keyExtractor={(i) => i.bookUrl + i.sourceId}
@@ -130,6 +140,7 @@ export function BookshelfScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: APP.bg },
+  topAction: { color: APP.accent, fontSize: 16 },
   list: { padding: 16 },
   actions: { flexDirection: 'row', marginBottom: 12 },
   actionBtn: {

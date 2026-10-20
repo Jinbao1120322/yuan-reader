@@ -14,6 +14,7 @@ import { search } from '../engine/SourceEngine';
 import { SearchBook } from '../engine/types';
 import { BookCover } from '../components/BookCover';
 import { APP } from '../theme/theme';
+import { TopBar } from '../components/TopBar';
 
 export function SearchScreen() {
   const navigation = useNavigation<any>();
@@ -82,6 +83,8 @@ export function SearchScreen() {
 
   return (
     <View style={styles.container}>
+      {/* 搜索页是从书架推进来的独立页，带返回；TopBar 负责吃 top inset */}
+      <TopBar title="搜索" onBack={() => navigation.goBack()} />
       <View style={styles.searchBar}>
         <TextInput
           style={styles.input}
