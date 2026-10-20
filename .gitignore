@@ -12,3 +12,4 @@ android/
 *.ipa
 .DS_Store
 .workbuddy/
+ios-build/

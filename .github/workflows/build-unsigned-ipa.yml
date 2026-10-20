@@ -142,16 +142,38 @@ jobs:
           BUNDLE=$(find ios/build/App.xcarchive/Products/Applications -maxdepth 2 -name 'main.jsbundle' | head -n1)
           echo "bundle: $BUNDLE"
           if [ -z "$BUNDLE" ]; then echo "ERROR: main.jsbundle 不存在"; exit 1; fi
-          if grep -aq '#00e5ff' "$BUNDLE"; then
-            echo "OK: bundle 含 v1.0.4 引导层探针色"
+          if grep -aq '#af52de' "$BUNDLE"; then
+            echo "OK: bundle 含 v1.0.5 引导层探针色"
           else
-            echo "ERROR: bundle 不含探针色 #00e5ff —— 打包用的是旧 index.js"
+            echo "ERROR: bundle 不含探针色 #af52de —— 打包用的是旧 index.js"
             exit 1
           fi
-          if grep -aq '1.0.4.5' "$BUNDLE"; then
-            echo "OK: bundle 含版本戳 1.0.4.5"
+          if grep -aq '1.0.5.6' "$BUNDLE"; then
+            echo "OK: bundle 含版本戳 1.0.5.6"
           else
-            echo "ERROR: bundle 不含版本戳 1.0.4.5"
+            echo "ERROR: bundle 不含版本戳 1.0.5.6"
+            exit 1
+          fi
+
+          # 防回归：expo 包依赖的这几个原生模块曾被 npm 嵌套安装，
+          # 导致 autolinking 扫不到、pod 没进包，import 'expo' 在加载期抛错 → 白屏。
+          # 这里直接检查最终二进制里有没有对应类，缺任何一个就让构建失败。
+          APP_BIN=$(find ios/build/App.xcarchive/Products/Applications -maxdepth 2 -name 'app' -type f | head -n1 \
+                    || find ios/build/App.xcarchive/Products/Applications -maxdepth 2 -type f -perm +111 | head -n1)
+          echo "binary: $APP_BIN"
+          if [ -z "$APP_BIN" ]; then echo "ERROR: 找不到 app 可执行文件"; exit 1; fi
+          MISSING=""
+          for MOD in ExpoModulesCore ExponentConstants ExpoAsset ExpoFileSystem ExpoFontLoader ExpoKeepAwake ExpoDocumentPicker; do
+            if grep -aq "$MOD" "$APP_BIN"; then
+              echo "OK: 原生模块 $MOD"
+            else
+              echo "ERROR: 二进制里没有 $MOD —— 对应的 expo 包没被 autolinking 进去"
+              MISSING="$MISSING $MOD"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "缺失模块:$MISSING"
+            echo "检查这些包是否在 node_modules 顶层（不能嵌在 node_modules/expo/node_modules 里）"
             exit 1
           fi
 

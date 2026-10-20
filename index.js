@@ -21,7 +21,7 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, AppRegistry } from 'react-native';
 
-const BOOT_TAG = 'v1.0.4';
+const BOOT_TAG = 'v1.0.5';
 
 function describeError(e) {
   if (!e) return '未知错误（throw 了空值）';
@@ -32,7 +32,7 @@ function describeError(e) {
 }
 
 // 每个 App 构建都会修改这个值，用来确认用户装的是哪一版
-const BUILD_STAMP = '1.0.4.5';
+const BUILD_STAMP = '1.0.5.6';
 
 // ---------------------------------------------------------------------------
 // 1. 加载期保护：require('./App') 失败也不至于白屏
@@ -119,7 +119,7 @@ function Boot() {
       {/* expo 入口挂了但兜底成功时，明确标出来，免得"看起来正常"却其实是降级跑 */}
       {expoImportError ? (
         <Text pointerEvents="none" style={s.expoWarn}>
-          expo 入口异常，已用 AppRegistry 兜底
+          {'expo 入口异常（已用 AppRegistry 兜底）：\n' + describeError(expoImportError).slice(0, 400)}
         </Text>
       ) : null}
     </View>
@@ -140,8 +140,8 @@ const s = StyleSheet.create({
     width: 16,
     height: 16,
     borderRadius: 8,
-    // 颜色随版本变化，方便从截图确认用户装的是哪一版：v1.0.4 = 青色
-    backgroundColor: '#00e5ff',
+    // 颜色随版本变化，方便从截图确认用户装的是哪一版：v1.0.5 = 紫色
+    backgroundColor: '#af52de',
   },
   expoWarn: {
     position: 'absolute',

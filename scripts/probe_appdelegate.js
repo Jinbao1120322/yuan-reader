@@ -127,6 +127,10 @@ final class YRProbe: NSObject {
       } else {
         YRProbe.band?.backgroundColor = UIColor(red: 0.15, green: 0.8, blue: 0.35, alpha: 0.96)
         YRProbe.show("JS 已挂载\nrootView = " + kind + "\n子视图(递归) = " + String(total))
+        // 已确认 JS 正常挂载：亮 2 秒给个信号，然后自动撤掉，不挡界面
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+          YRProbe.band?.isHidden = true
+        }
       }
       if let b = YRProbe.band {
         win.bringSubviewToFront(b)
