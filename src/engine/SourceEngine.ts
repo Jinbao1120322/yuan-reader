@@ -2,6 +2,7 @@ import { Buffer } from 'buffer';
 import { loadHtml, getValues, getElements, CheerioRoot } from './select';
 import { buildSearchUrl, resolveUrl } from './evalUrl';
 import { jsonField, jsonList } from './jsonPath';
+import { pickBestChapters, guessContent, guessTocUrl, xpathChapters } from './fallback';
 import {
   BookSource,
   SearchBook,
@@ -9,6 +10,7 @@ import {
   BookChapter,
   ChapterContent,
   RuleContent,
+  RuleToc,
 } from './types';
 
 // 响应不是 HTML 而是 JSON 接口时，规则按 JSONPath 解析。
@@ -251,42 +253,137 @@ export async function getBookInfo(
   };
 }
 
-// —— 目录 ——
-export async function getToc(
-  source: BookSource,
-  tocUrl: string
-): Promise<BookChapter[]> {
-  const rule = source.ruleToc;
-  if (!rule || !rule.chapterList) return [];
-  const html = await fetchHtml(tocUrl, source);
+// 按书源规则解析目录（JSON 接口 或 HTML）
+function tocByRule(
+  html: string,
+  pageUrl: string,
+  rule: RuleToc
+): BookChapter[] {
+  try {
+    const j = tryJson(html);
+    if (j.ok) {
+      const out: BookChapter[] = [];
+      let i = 0;
+      for (const it of jsonList(j.data, rule.chapterList)) {
+        if (!it) continue;
+        const name =
+          jsonField(it, rule.chapterName) ||
+          jsonField(it, 'name') ||
+          jsonField(it, 'title');
+        const urlRaw =
+          jsonField(it, rule.chapterUrl) ||
+          jsonField(it, 'url') ||
+          jsonField(it, 'link');
+        if (!name || !urlRaw) continue;
+        out.push({ name, url: resolveUrl(urlRaw, pageUrl), index: i++ });
+      }
+      if (out.length) return out;
+    }
 
-  const j = tryJson(html);
-  if (j.ok) {
+    const listRule = rule.chapterList || '';
+    if (!listRule) return [];
+
+    const $ = loadHtml(html);
+    const items = getElements($, $, listRule);
+    if (!items || !items.length) {
+      // xpath 写的 chapterList 走独立分支
+      if (/^@?(xpath:|\/\/)/i.test(listRule)) {
+        const xc = xpathChapters(html, listRule, pageUrl);
+        if (xc.length) return xc;
+      }
+      return [];
+    }
+
     const out: BookChapter[] = [];
     let i = 0;
-    for (const it of jsonList(j.data, rule.chapterList)) {
-      if (!it) continue;
-      const name = jsonField(it, rule.chapterName);
-      const urlRaw = jsonField(it, rule.chapterUrl);
-      if (!name || !urlRaw) continue;
-      out.push({ name, url: resolveUrl(urlRaw, tocUrl), index: i++ });
+    items.each((_: number, el: any) => {
+      const ctx = $(el);
+      let name = rule.chapterName
+        ? first(getValues($, ctx, rule.chapterName, pageUrl))
+        : '';
+      let url = rule.chapterUrl
+        ? first(getValues($, ctx, rule.chapterUrl, pageUrl))
+        : '';
+      // 书源只写了 chapterList 的情况很常见，按最常见的结构补齐
+      const ownHref = typeof ctx.attr === 'function' ? ctx.attr('href') : '';
+      if (!url && ownHref) url = ownHref;
+      if (!url) url = ctx.find('a').first().attr('href') || '';
+      if (!name && ownHref) name = (ctx.text() || '').replace(/\s+/g, ' ').trim();
+      if (!name) {
+        name = (ctx.find('a').first().text() || ctx.text() || '')
+          .replace(/\s+/g, ' ')
+          .trim();
+      }
+      if (!name || !url) return;
+      out.push({ name, url: resolveUrl(url, pageUrl), index: i++ });
+    });
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// —— 目录 ——
+// 三路尝试：①按书源规则 ②顺着详情页里的「目录」入口再试 ③按页面结构猜。
+// 之前只走第一路，规则一残缺就「未解析到章节目录」，书搜到了却读不了。
+export async function getToc(
+  source: BookSource,
+  tocUrl: string,
+  bookUrl?: string
+): Promise<BookChapter[]> {
+  const rule = source.ruleToc;
+
+  interface Page {
+    url: string;
+    html: string;
+  }
+  const pages: Page[] = [];
+  const seen = new Set<string>();
+
+  const load = async (u: string): Promise<Page | null> => {
+    if (!u || seen.has(u) || pages.length >= 5) return null;
+    seen.add(u);
+    try {
+      const html = await fetchHtml(u, source, 'GET', 10000);
+      if (!html) return null;
+      const p = { url: u, html };
+      pages.push(p);
+      return p;
+    } catch {
+      return null;
     }
-    if (out.length) return out;
+  };
+
+  await load(tocUrl);
+  if (bookUrl) await load(bookUrl);
+  if (!pages.length) return [];
+
+  // ① 规则
+  if (rule && rule.chapterList) {
+    for (const p of pages) {
+      const ch = tocByRule(p.html, p.url, rule);
+      if (ch.length) return ch;
+    }
   }
 
-  const $ = loadHtml(html);
-  const items = getElements($, $, rule.chapterList);
-  const out: BookChapter[] = [];
-  let i = 0;
-  items.each((_: number, el: any) => {
-    const ctx = $(el);
-    const name = first(getValues($, ctx, rule.chapterName, tocUrl));
-    let url = first(getValues($, ctx, rule.chapterUrl, tocUrl));
-    if (!name || !url) return;
-    url = resolveUrl(url, tocUrl);
-    out.push({ name, url, index: i++ });
-  });
-  return out;
+  // ② 详情页里藏着「目录」链接时，顺着去一次
+  for (const p of pages) {
+    const link = guessTocUrl(p.html, p.url);
+    if (!link) continue;
+    const np = await load(link);
+    if (!np) continue;
+    if (rule && rule.chapterList) {
+      const ch = tocByRule(np.html, np.url, rule);
+      if (ch.length) return ch;
+    }
+    break;
+  }
+
+  // ③ 按结构猜：多个候选页都猜出东西时，自动挑最像目录的那一份
+  const guessed = pickBestChapters(pages);
+  if (guessed.length) return guessed;
+
+  return [];
 }
 
 // —— 章节正文 ——
@@ -296,42 +393,45 @@ export async function getContent(
   maxPages = 50
 ): Promise<ChapterContent> {
   const rule: RuleContent | undefined = source.ruleContent;
-  if (!rule || !rule.content) return { content: '' };
+  const contentRule = rule && rule.content ? rule.content : '';
+  const nextRule = rule && rule.nextContentUrl ? rule.nextContentUrl : '';
+
   let url = chapterUrl;
   let paragraphs: string[] = [];
   let guard = 0;
   let nextUrl: string | undefined;
   while (url && guard < maxPages) {
     guard++;
-    const html = await fetchHtml(url, source);
+    const pageUrl = url;
+    const html = await fetchHtml(pageUrl, source);
     const j = tryJson(html);
     let raw = '';
+
     if (j.ok) {
-      raw = jsonField(j.data, rule.content);
-      const nuJ = jsonField(j.data, rule.nextContentUrl);
-      if (nuJ && nuJ !== url) {
-        nextUrl = resolveUrl(nuJ, url);
-        url = nextUrl;
-      } else url = '';
+      raw = contentRule ? jsonField(j.data, contentRule) : '';
+      const nuJ = nextRule ? jsonField(j.data, nextRule) : '';
+      url = nuJ && nuJ !== pageUrl ? resolveUrl(nuJ, pageUrl) : '';
     } else {
       const $ = loadHtml(html);
-      raw = first(getValues($, $, rule.content, url));
-      // 纯 text 提取会把 <p> 之间的换行全吃掉，正文挤成一大坨。
-      // 这里回退取 innerHTML 再剥标签，把段落还原出来。
-      if (!/\n/.test(raw)) {
-        const htmlRule = /@(html|textnodes)$/i.test(rule.content)
-          ? rule.content
-          : rule.content.replace(/(@text)?$/i, '@html');
-        const alt = first(getValues($, $, htmlRule, url));
-        if (alt && alt.length > raw.length) raw = alt;
+      if (contentRule) {
+        raw = first(getValues($, $, contentRule, pageUrl));
+        // 纯 text 提取会把 <p> 之间的换行全吃掉，正文挤成一大坨。
+        // 这里回退取 innerHTML 再剥标签，把段落还原出来。
+        if (!/\n/.test(raw)) {
+          const htmlRule = /@(html|textnodes)$/i.test(contentRule)
+            ? contentRule
+            : contentRule.replace(/(@text)?$/i, '@html');
+          const alt = first(getValues($, $, htmlRule, pageUrl));
+          if (alt && alt.length > raw.length) raw = alt;
+        }
       }
-      // 下一页
-      const nu = first(getValues($, $, rule.nextContentUrl, url));
-      if (nu && nu !== url) {
-        nextUrl = resolveUrl(nu, url);
-        url = nextUrl;
-      } else url = '';
+      // 规则没写或没命中 → 按页面结构猜正文
+      if (!raw) raw = guessContent(html, pageUrl);
+
+      const nu = nextRule ? first(getValues($, $, nextRule, pageUrl)) : '';
+      url = nu && nu !== pageUrl ? resolveUrl(nu, pageUrl) : '';
     }
+
     // 分段：按 <br> / 换行 / 句号 切分，并清理空白与标签
     const cleaned = stripTags(raw);
     const parts = cleaned
@@ -343,11 +443,12 @@ export async function getContent(
   }
   // 书源级替换净化：replaceRegex 形如 "pattern##replacement" 或 "pattern"（删除）
   let text = paragraphs.join('\n\n');
-  if (rule.replaceRegex) {
-    const i = rule.replaceRegex.indexOf('##');
+  const replaceRegex = rule && rule.replaceRegex ? rule.replaceRegex : '';
+  if (replaceRegex) {
+    const i = replaceRegex.indexOf('##');
     if (i !== -1) {
-      const re = rule.replaceRegex.slice(0, i);
-      const rpl = rule.replaceRegex.slice(i + 2);
+      const re = replaceRegex.slice(0, i);
+      const rpl = replaceRegex.slice(i + 2);
       try {
         text = text.replace(new RegExp(re, 'g'), rpl);
       } catch {
@@ -355,7 +456,7 @@ export async function getContent(
       }
     } else {
       try {
-        text = text.replace(new RegExp(rule.replaceRegex, 'g'), '');
+        text = text.replace(new RegExp(replaceRegex, 'g'), '');
       } catch {
         /* ignore */
       }

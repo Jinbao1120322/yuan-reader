@@ -17,6 +17,13 @@ import { TopBar } from '../components/TopBar';
 import { APP } from '../theme/theme';
 import { LOCAL_SOURCE_ID, getLocalChapters } from '../utils/localBook';
 
+// 报错时把长链接裁短，否则 Alert 里糊成一片看不清
+function shortUrl(u: string): string {
+  const s = String(u || '');
+  if (s.length <= 70) return s;
+  return s.slice(0, 42) + '…' + s.slice(-24);
+}
+
 export function BookDetailScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -68,15 +75,26 @@ export function BookDetailScreen() {
 
   const startRead = async () => {
     try {
-      let chapters: BookChapter[];
+      let chapters: BookChapter[] = [];
       if (sourceId === LOCAL_SOURCE_ID) {
         chapters = (await getLocalChapters(bookUrl)) as BookChapter[];
       } else {
         const src = sources.find((s) => s.bookSourceUrl === sourceId);
         if (!src) throw new Error('未找到对应书源');
         const tocUrl = (info?.tocUrl || bookUrl) as string;
-        chapters = await getToc(src, tocUrl);
-        if (chapters.length === 0) throw new Error('未解析到章节目录');
+        setLoading(true);
+        try {
+          chapters = await getToc(src, tocUrl, bookUrl);
+        } finally {
+          setLoading(false);
+        }
+        if (chapters.length === 0) {
+          throw new Error(
+            `这本书的目录没解析出来。\n\n书源：${src.bookSourceName}\n目录页：${shortUrl(
+              tocUrl
+            )}\n\n多半是这个书源的目录规则失效了，换个书源试试。`
+          );
+        }
         cacheChapters(bookUrl, sourceId, chapters);
       }
       addToShelf({

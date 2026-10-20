@@ -166,7 +166,7 @@ export function ReaderScreen() {
       if (!src) return;
       const bi = await getBookInfo(src, bookUrl).catch(() => null);
       const tocUrl = (bi?.tocUrl || bookUrl) as string;
-      const ch = await getToc(src, tocUrl);
+      const ch = await getToc(src, tocUrl, bookUrl);
       if (!cancel) {
         setChapters(ch);
         if (ch.length) cacheChapters(bookUrl, sourceId, ch);
