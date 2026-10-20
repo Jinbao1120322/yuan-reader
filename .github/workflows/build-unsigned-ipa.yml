@@ -67,10 +67,18 @@ jobs:
       - name: Package unsigned IPA
         run: |
           cd ios
+          set -e
+          APP=$(find build/App.xcarchive/Products/Applications -maxdepth 1 -name '*.app' | head -n1)
+          echo "Found app bundle: $APP"
+          if [ -z "$APP" ]; then
+            echo "ERROR: no .app found in archive"; ls -la build/App.xcarchive/Products/Applications 2>/dev/null || true; exit 1
+          fi
+          rm -rf Payload
           mkdir -p Payload
-          cp -r build/App.xcarchive/Products/Applications/*.app Payload/
-          cd ..
-          zip -r "yuan-reader-v${{ steps.ver.outputs.version }}.ipa" Payload
+          cp -R "$APP" Payload/
+          # 在 ios/ 内 zip，保证 ipa 结构是 Payload/app.app；输出到仓库根目录
+          zip -r "../yuan-reader-v${{ steps.ver.outputs.version }}.ipa" Payload
+          ls -lh "../yuan-reader-v${{ steps.ver.outputs.version }}.ipa"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
