@@ -31,7 +31,13 @@ jobs:
         env:
           CI: '1'
           EXPO_NO_TELEMETRY: '1'
-        run: npx expo prebuild --platform ios
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Patch Podfile (fmt c++17 for Xcode 26 clang) and install pods
+        run: |
+          cd ios
+          ruby ../scripts/fix_podfile.rb Podfile
+          pod install
 
       - name: Build unsigned archive
         run: |

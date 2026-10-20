@@ -27,9 +27,6 @@
     },
     "web": {
       "bundler": "metro"
-    },
-    "plugins": [
-      "./app.plugin.js"
-    ]
+    }
   }
 }

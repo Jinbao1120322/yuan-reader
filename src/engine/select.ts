@@ -1,4 +1,8 @@
-import * as cheerio from 'cheerio';
+// 用 cheerio/slim 而非 'cheerio'：后者（batteries-included）的入口静态 import 了
+// undici / parse5-parser-stream / encoding-sniffer / node:stream 等 Node 内置模块，
+// React Native 的 Metro 打包器无法解析，会导致 xcodebuild archive 失败。
+// /slim 仅依赖 htmlparser2 + domhandler，纯浏览器/移动端可用，API 与完整版一致。
+import * as cheerio from 'cheerio/slim';
 import { DOMParser } from '@xmldom/xmldom';
 import * as xpath from 'xpath';
 
