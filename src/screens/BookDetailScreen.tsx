@@ -1,13 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  Alert,
-} from 'react-native';
+import { View, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useStore } from '../store/useStore';
 import { getBookInfo, getToc } from '../engine/SourceEngine';
@@ -16,6 +8,9 @@ import { BookCover } from '../components/BookCover';
 import { TopBar } from '../components/TopBar';
 import { APP } from '../theme/theme';
 import { LOCAL_SOURCE_ID, getLocalChapters } from '../utils/localBook';
+import { SourceSwitchSheet } from '../components/SourceSwitchSheet';
+import { SearchBook } from '../engine/types';
+import { Text } from '../components/AppText';
 
 // 报错时把长链接裁短，否则 Alert 里糊成一片看不清
 function shortUrl(u: string): string {
@@ -37,6 +32,7 @@ export function BookDetailScreen() {
     lastChapter,
     chapterIndex,
     pageIndex,
+    alts, // 搜索结果里同名同作者的其他来源，有的话换源可以秒开
   } = route.params as any;
 
   const sources = useStore((s) => s.sources);
@@ -46,6 +42,7 @@ export function BookDetailScreen() {
   const [info, setInfo] = useState<BookInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [localChapters, setLocalChapters] = useState<BookChapter[] | null>(null);
+  const [switchOpen, setSwitchOpen] = useState(false);
 
   useEffect(() => {
     let cancel = false;
@@ -123,6 +120,22 @@ export function BookDetailScreen() {
     }
   };
 
+  // 换源 = 用新源的 bookUrl 重新加载这个详情页。replace 而不是 push，
+  // 返回时不会一层层叠出好几个详情页。
+  const onPickSource = (b: SearchBook) => {
+    setSwitchOpen(false);
+    navigation.replace('BookDetail', {
+      bookUrl: b.bookUrl,
+      sourceId: b.sourceId,
+      name: b.name,
+      author: b.author,
+      coverUrl: b.coverUrl,
+      intro: b.intro,
+      lastChapter: b.lastChapter,
+      alts,
+    });
+  };
+
   const displayName = info?.name || name;
   const displayAuthor = info?.author || author;
   const displayIntro = info?.intro || intro;
@@ -148,6 +161,11 @@ export function BookDetailScreen() {
                 最新：{info.lastChapter}
               </Text>
             ) : null}
+            <TouchableOpacity style={styles.switchBtn} onPress={() => setSwitchOpen(true)}>
+              <Text style={styles.switchText}>
+                换源{alts && alts.length > 1 ? ` · ${alts.length} 个来源` : ''}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -168,6 +186,16 @@ export function BookDetailScreen() {
       <TouchableOpacity style={styles.readBtn} onPress={startRead}>
         <Text style={styles.readText}>加入书架并开始阅读</Text>
       </TouchableOpacity>
+
+      <SourceSwitchSheet
+        visible={switchOpen}
+        name={displayName}
+        author={displayAuthor}
+        currentSourceId={sourceId}
+        presets={alts}
+        onClose={() => setSwitchOpen(false)}
+        onPick={onPickSource}
+      />
     </View>
   );
 }
@@ -198,4 +226,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   readText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  switchBtn: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: APP.card2,
+    borderWidth: 1,
+    borderColor: APP.border,
+  },
+  switchText: { color: APP.accent, fontSize: 13, fontWeight: '700' },
 });

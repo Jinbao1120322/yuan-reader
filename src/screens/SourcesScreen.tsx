@@ -1,22 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  FlatList,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  TextInput,
-  Modal,
-  ActivityIndicator,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  InputAccessoryView,
-  Switch,
-} from 'react-native';
+import { View, FlatList, ScrollView, TouchableOpacity, StyleSheet, Alert, TextInput, Modal, ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform, Pressable, InputAccessoryView, Switch } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useStore } from '../store/useStore';
 import { BookSource } from '../engine/types';
@@ -35,6 +18,7 @@ import {
   Tally,
   VERDICT_LABEL,
 } from '../utils/checkSources';
+import { Text } from '../components/AppText';
 
 // iOS 键盘上方那条「完成」工具条的 id
 const KEYBOARD_DONE_ID = 'sources-import-done';

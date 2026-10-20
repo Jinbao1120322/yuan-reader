@@ -1,17 +1,20 @@
 import React, { useState } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
   TouchableOpacity,
   Switch,
   TextInput,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
 import { useStore, ReplaceRule } from '../store/useStore';
 import { APP } from '../theme/theme';
 import { TopBar } from '../components/TopBar';
 import appJson from '../../app.json';
+import { Text } from '../components/AppText';
+import { deleteFontFile, importFontFile } from '../utils/customFonts';
 
 // 版本号以 app.json 为准，避免与构建/CI 产生的版本不一致
 const VERSION = (appJson as any).expo?.version || '1.0.0';
@@ -19,6 +22,58 @@ const VERSION = (appJson as any).expo?.version || '1.0.0';
 export function SettingsScreen() {
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
+
+  const fonts = useStore((s) => s.fonts);
+  const addFont = useStore((s) => s.addFont);
+  const removeFont = useStore((s) => s.removeFont);
+  const [fontBusy, setFontBusy] = useState(false);
+
+  // 从「文件」导入 ttf / otf / ttc，复制进沙盒并立刻注册
+  const pickFont = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['font/*', 'application/octet-stream', 'public.data'],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (res.canceled || !res.assets?.length) return;
+      const asset = res.assets[0];
+      if (!/\.(ttf|otf|ttc|otc)$/i.test(asset.name || '')) {
+        Alert.alert('这个文件不是字体', '支持 .ttf / .otf / .ttc');
+        return;
+      }
+      setFontBusy(true);
+      const f = await importFontFile(asset.uri, asset.name || '字体.ttf');
+      addFont(f);
+      // 导入后直接切过去，省一次点击
+      updateSettings({ fontId: f.id });
+      setFontBusy(false);
+    } catch (e: any) {
+      setFontBusy(false);
+      Alert.alert('导入失败', e?.message || String(e));
+    }
+  };
+
+  const useFont = (id: string | null) => updateSettings({ fontId: id });
+
+  const askDeleteFont = (f: { id: string; label: string }) => {
+    if (settings.fontId === f.id) {
+      Alert.alert('无法删除', '正在使用中的字体无法删除，请先切换到其他字体。');
+      return;
+    }
+    Alert.alert('删除字体', `确定删除「${f.label}」？`, [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: async () => {
+          const target = fonts.find((x) => x.id === f.id);
+          removeFont(f.id);
+          if (target) await deleteFontFile(target);
+        },
+      },
+    ]);
+  };
 
   const [showReplace, setShowReplace] = useState(false);
   const [pat, setPat] = useState('');
@@ -124,6 +179,51 @@ export function SettingsScreen() {
           </View>
         )}
 
+        <Text style={styles.section}>字体</Text>
+        <Text style={styles.fontHint}>
+          导入 .ttf / .otf / .ttc 后替换整个 App 的字体（含阅读正文）
+        </Text>
+
+        <TouchableOpacity
+          style={[styles.rowBtn, settings.fontId ? null : styles.rowOn]}
+          onPress={() => useFont(null)}
+        >
+          <Text style={styles.label}>系统默认</Text>
+          <Text style={styles.val}>{settings.fontId ? '' : '使用中'}</Text>
+        </TouchableOpacity>
+
+        {fonts.map((f) => {
+          const on = settings.fontId === f.id;
+          return (
+            <View key={f.id} style={[styles.fontRow, on && styles.rowOn]}>
+              <TouchableOpacity style={{ flex: 1 }} onPress={() => useFont(f.id)}>
+                <Text style={styles.label} numberOfLines={1}>
+                  {f.label}
+                </Text>
+                <Text style={styles.fontSub}>{on ? '使用中' : '点击使用'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => askDeleteFont(f)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={[styles.fontDel, on && { opacity: 0.35 }]}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        })}
+
+        <TouchableOpacity
+          style={[styles.rowBtn, fontBusy && { opacity: 0.6 }]}
+          onPress={pickFont}
+          disabled={fontBusy}
+        >
+          {fontBusy ? (
+            <ActivityIndicator color={APP.accent} />
+          ) : (
+            <Text style={styles.addText}>＋ 导入字体文件</Text>
+          )}
+        </TouchableOpacity>
+
         <Text style={styles.section}>关于</Text>
         <View style={styles.row}>
           <Text style={styles.label}>版本</Text>
@@ -146,6 +246,26 @@ function pageLabel(k: string) {
 }
 
 const styles = StyleSheet.create({
+  fontHint: {
+    color: APP.sub,
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 8,
+  },
+  fontRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: APP.card,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: APP.border,
+  },
+  fontSub: { color: APP.sub, fontSize: 11, marginTop: 3 },
+  fontDel: { color: APP.danger, fontSize: 16, marginLeft: 12 },
+  rowOn: { borderColor: APP.accent },
   container: { flex: 1, backgroundColor: APP.bg },
   body: { padding: 16 },
   section: {

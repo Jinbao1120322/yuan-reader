@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -16,6 +16,9 @@ import { SearchScreen } from './src/screens/SearchScreen';
 import { BookDetailScreen } from './src/screens/BookDetailScreen';
 import { ReaderScreen } from './src/screens/ReaderScreen';
 import { APP } from './src/theme/theme';
+import { FontProvider } from './src/components/AppText';
+import { useStore } from './src/store/useStore';
+import { currentFontFamily, registerFont } from './src/utils/customFonts';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -75,9 +78,38 @@ function TabNavigator() {
 }
 
 export default function App() {
+  // 自定义字体要在本次进程里重新注册一次（CTFontManager 的注册不跨启动），
+  // 注册完再切字体，否则第一帧会用系统字体、随后跳一下。
+  const fonts = useStore((s) => s.fonts);
+  const fontId = useStore((s) => s.settings.fontId);
+  const [family, setFamily] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const want = currentFontFamily(fonts, fontId);
+    if (!want) {
+      setFamily(null);
+      return;
+    }
+    const f = fonts.find((x) => x.id === fontId);
+    if (!f) return;
+    registerFont(f)
+      .then(() => {
+        if (alive) setFamily(want);
+      })
+      .catch(() => {
+        // 字体文件被系统清掉了之类，静默退回系统字体，不要因此白屏
+        if (alive) setFamily(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [fonts, fontId]);
+
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider initialMetrics={SAFE_METRICS}>
+        <FontProvider font={family}>
         <ErrorBoundary>
           <NavigationContainer theme={navTheme}>
             <StatusBar style="light" />
@@ -89,6 +121,7 @@ export default function App() {
             </Stack.Navigator>
           </NavigationContainer>
         </ErrorBoundary>
+        </FontProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

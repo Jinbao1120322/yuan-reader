@@ -1,16 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  Modal,
-  FlatList,
-  Alert,
-  Animated,
-} from 'react-native';
+import { View, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, FlatList, Alert, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useStore } from '../store/useStore';
@@ -25,6 +14,17 @@ import {
   getLocalChapterText,
 } from '../utils/localBook';
 import { paginate } from '../utils/paginate';
+import { SourceSwitchSheet } from '../components/SourceSwitchSheet';
+import { SearchBook } from '../engine/types';
+import { matchChapterIndex } from '../utils/bookMatch';
+import {
+  pageTextHeight,
+  pageTextWidth,
+  PAGE_PAD_BOTTOM,
+  PAGE_PAD_H,
+  PAGE_PAD_TOP,
+} from '../theme/layout';
+import { Text } from '../components/AppText';
 
 const THEME_KEYS = ['day', 'night', 'green', 'paper'] as const;
 
@@ -32,7 +32,11 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scroll: { flex: 1 },
-  content: { paddingHorizontal: 20, paddingVertical: 16, paddingBottom: 40 },
+  content: {
+    paddingHorizontal: PAGE_PAD_H,
+    paddingTop: PAGE_PAD_TOP,
+    paddingBottom: PAGE_PAD_BOTTOM,
+  },
   text: { fontSize: 18 },
   bottom: {
     flexDirection: 'row',
@@ -88,6 +92,16 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   stepText: { color: APP.text, fontSize: 15, fontWeight: '700' },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginBottom: 6,
+    borderBottomWidth: 1,
+    borderColor: APP.border,
+  },
+  switchSub: { color: APP.sub, fontSize: 11, marginTop: 3 },
+  switchGo: { color: APP.accent, fontSize: 14, fontWeight: '700' },
   themes: { flexDirection: 'row' },
   themeDot: {
     width: 30,
@@ -103,14 +117,18 @@ const styles = StyleSheet.create({
 export function ReaderScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
-  const {
-    bookUrl,
-    sourceId,
-    name,
-    author,
-    chapterIndex,
-    pageIndex: routePageIndex,
-  } = route.params as any;
+  const routeParams = route.params as any;
+  const { chapterIndex, pageIndex: routePageIndex } = routeParams;
+
+  // 书籍标识放进 state：换源时要整体切走，如果还是从路由参数里取就换不了。
+  // 下面仍然解构成同名变量，其余代码一行不用改。
+  const [book, setBook] = useState({
+    bookUrl: routeParams.bookUrl as string,
+    sourceId: routeParams.sourceId as string,
+    name: (routeParams.name || '') as string,
+    author: (routeParams.author || '') as string,
+  });
+  const { bookUrl, sourceId, name, author } = book;
 
   const sources = useStore((s) => s.sources);
   const shelf = useStore((s) => s.shelf);
@@ -118,6 +136,8 @@ export function ReaderScreen() {
   const updateSettings = useStore((s) => s.updateSettings);
   const updateProgress = useStore((s) => s.updateProgress);
   const cacheChapters = useStore((s) => s.cacheChapters);
+  const addToShelf = useStore((s) => s.addToShelf);
+  const removeFromShelf = useStore((s) => s.removeFromShelf);
 
   const theme = READER_THEMES[settings.theme];
   const isPaged = settings.pageMode !== 'scroll';
@@ -128,6 +148,9 @@ export function ReaderScreen() {
   const [loading, setLoading] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [switchOpen, setSwitchOpen] = useState(false);
+  // 换源后要跳到「同一章」，先把当前章节名记下来，等新目录到了再匹配
+  const pendingChapterTitle = useRef<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
   // 顶/底工具栏显隐。点屏幕中间切换，方便沉浸阅读。
@@ -183,14 +206,29 @@ export function ReaderScreen() {
   useEffect(() => {
     let cancel = false;
     const load = async () => {
+      const applyList = (ch: BookChapter[]) => {
+        if (cancel) return;
+        setChapters(ch);
+        // 换源后按章节名对齐：先精确匹配，再退一步去掉「第X章」前缀比
+        const want = pendingChapterTitle.current;
+        if (want && ch.length) {
+          pendingChapterTitle.current = null;
+          const mi = matchChapterIndex(ch, want);
+          if (mi >= 0) {
+            setIndex(mi);
+            setPageIndex(0);
+          }
+        }
+      };
+
       if (sourceId === LOCAL_SOURCE_ID) {
         const ch = (await getLocalChapters(bookUrl)) as BookChapter[];
-        if (!cancel) setChapters(ch);
+        applyList(ch);
         return;
       }
       const cached = shelfBook?.cachedChapters;
       if (cached && cached.length) {
-        if (!cancel) setChapters(cached);
+        applyList(cached);
         return;
       }
       const src = sources.find((s) => s.bookSourceUrl === sourceId);
@@ -198,10 +236,8 @@ export function ReaderScreen() {
       const bi = await getBookInfo(src, bookUrl).catch(() => null);
       const tocUrl = (bi?.tocUrl || bookUrl) as string;
       const ch = await getToc(src, tocUrl, bookUrl);
-      if (!cancel) {
-        setChapters(ch);
-        if (ch.length) cacheChapters(bookUrl, sourceId, ch);
-      }
+      applyList(ch);
+      if (!cancel && ch.length) cacheChapters(bookUrl, sourceId, ch);
     };
     load();
     return () => {
@@ -262,10 +298,11 @@ export function ReaderScreen() {
     return paginate(content, {
       fontSize: settings.fontSize,
       lineHeight: settings.lineHeight,
-      width: area.w - 40,
-      height: area.h - 56,
+      width: pageTextWidth(area.w),
+      height: pageTextHeight(area.h),
     });
-  }, [content, area.w, area.h, settings.fontSize, settings.lineHeight, isPaged]);
+    // 换字体后行高和字宽都会变，必须重新分页，否则每页行数对不上
+  }, [content, area.w, area.h, settings.fontSize, settings.lineHeight, settings.fontId, isPaged]);
 
   // 章节内容/排版变化后，按 pending 定位当前页（翻章时跳到首/末页），并持久化进度
   useEffect(() => {
@@ -290,6 +327,41 @@ export function ReaderScreen() {
   };
   const goNext = () => {
     if (index < chapters.length - 1) setIndex(index + 1);
+  };
+
+  // 换源：记下当前章节名 → 切书源 → 新目录到了自动跳到同一章
+  const onPickSource = (b: SearchBook) => {
+    setSwitchOpen(false);
+    if (b.sourceId === sourceId && b.bookUrl === bookUrl) return;
+    pendingChapterTitle.current = chapters[index]?.name || null;
+    setPageIndex(0);
+    setContent('');
+    setChapters([]);
+
+    // 书架里的书跟着迁移，否则从书架再点进来还是旧源、进度也对不上
+    if (shelfBook) {
+      removeFromShelf(shelfBook.bookUrl, shelfBook.sourceId);
+      addToShelf({
+        bookUrl: b.bookUrl,
+        sourceId: b.sourceId,
+        name: b.name || shelfBook.name,
+        author: b.author || shelfBook.author,
+        coverUrl: b.coverUrl || shelfBook.coverUrl,
+        intro: b.intro || shelfBook.intro,
+        lastChapter: b.lastChapter || shelfBook.lastChapter,
+        addedAt: shelfBook.addedAt,
+        lastReadAt: Date.now(),
+        lastChapterIndex: 0,
+        lastReadPos: 0,
+      });
+    }
+
+    setBook({
+      bookUrl: b.bookUrl,
+      sourceId: b.sourceId,
+      name: b.name || name,
+      author: b.author || author,
+    });
   };
 
   const savePageProgress = (pi: number) => {
@@ -499,6 +571,15 @@ export function ReaderScreen() {
         </View>
       </Modal>
 
+      <SourceSwitchSheet
+        visible={switchOpen}
+        name={name}
+        author={author}
+        currentSourceId={sourceId}
+        onClose={() => setSwitchOpen(false)}
+        onPick={onPickSource}
+      />
+
       {/* 阅读设置 */}
       <Modal visible={menuOpen} transparent animationType="fade">
         <TouchableOpacity
@@ -508,6 +589,21 @@ export function ReaderScreen() {
         >
           <View style={[styles.menu, { backgroundColor: APP.card }]}>
             <Text style={styles.menuTitle}>阅读设置</Text>
+            <TouchableOpacity
+              style={styles.switchRow}
+              onPress={() => {
+                setMenuOpen(false);
+                setSwitchOpen(true);
+              }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.menuLabel}>换源</Text>
+                <Text style={styles.switchSub} numberOfLines={1}>
+                  当前：{sources.find((x) => x.bookSourceUrl === sourceId)?.bookSourceName || '未知书源'}
+                </Text>
+              </View>
+              <Text style={styles.switchGo}>切换</Text>
+            </TouchableOpacity>
             <View style={styles.row}>
               <Text style={styles.menuLabel}>字号</Text>
               <View style={styles.stepper}>

@@ -1,14 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  StyleSheet,
-  TextInput,
-  ActivityIndicator,
-  Keyboard,
-} from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, FlatList, TouchableOpacity, StyleSheet, TextInput, ActivityIndicator, Keyboard } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useStore } from '../store/useStore';
 import { search } from '../engine/SourceEngine';
@@ -16,6 +7,8 @@ import { BookSource, SearchBook } from '../engine/types';
 import { BookCover } from '../components/BookCover';
 import { APP } from '../theme/theme';
 import { TopBar } from '../components/TopBar';
+import { BookGroup, groupBooks } from '../utils/bookMatch';
+import { Text } from '../components/AppText';
 
 // 跨源搜索的调度参数。
 // 之前是 Promise.all 一次性把几百个源全发出去、且等全部返回才渲染，
@@ -259,35 +252,44 @@ export function SearchScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const renderItem = ({ item }: { item: SearchBook }) => (
-    <TouchableOpacity
-      style={styles.item}
-      onPress={() =>
-        navigation.navigate('BookDetail', {
-          bookUrl: item.bookUrl,
-          sourceId: item.sourceId,
-          name: item.name,
-          author: item.author,
-          coverUrl: item.coverUrl,
-          intro: item.intro,
-          lastChapter: item.lastChapter,
-        })
-      }
-    >
-      <BookCover uri={item.coverUrl} name={item.name} width={64} height={88} />
-      <View style={styles.meta}>
-        <Text style={styles.name} numberOfLines={1}>
-          {item.name}
-        </Text>
-        <Text style={styles.author} numberOfLines={1}>
-          {item.author || '未知'}
-        </Text>
-        <Text style={styles.src} numberOfLines={1}>
-          {item.sourceName}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
+  // 同一本书在几十个源里各出一条，这里按「书名 + 作者」归并成一本一行，
+  // 各源的条目挂在 items 上，详情页里可以直接换源
+  const groups = useMemo(() => groupBooks(results), [results]);
+
+  const renderItem = ({ item }: { item: BookGroup }) => {
+    const first = item.items[0];
+    const n = item.items.length;
+    return (
+      <TouchableOpacity
+        style={styles.item}
+        onPress={() =>
+          navigation.navigate('BookDetail', {
+            bookUrl: first.bookUrl,
+            sourceId: first.sourceId,
+            name: item.name,
+            author: item.author,
+            coverUrl: item.coverUrl,
+            intro: first.intro,
+            lastChapter: first.lastChapter,
+            alts: item.items,
+          })
+        }
+      >
+        <BookCover uri={item.coverUrl} name={item.name} width={64} height={88} />
+        <View style={styles.meta}>
+          <Text style={styles.name} numberOfLines={1}>
+            {item.name}
+          </Text>
+          <Text style={styles.author} numberOfLines={1}>
+            {item.author || '未知'}
+          </Text>
+          <Text style={styles.src} numberOfLines={1}>
+            {n > 1 ? `${n} 个书源 · 点进去可换源` : first.sourceName}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const isEmpty = !loading && done && results.length === 0;
 
@@ -317,8 +319,8 @@ export function SearchScreen() {
           {loading && <ActivityIndicator color={APP.accent} size="small" />}
           <Text style={styles.statusText} numberOfLines={1}>
             {loading
-              ? `搜索中 ${stat.done}/${stat.total} · 已找到 ${results.length} 本`
-              : `共 ${results.length} 本`}
+              ? `搜索中 ${stat.done}/${stat.total} · 已找到 ${groups.length} 本`
+              : `共 ${groups.length} 本 · ${results.length} 条来源`}
             {stat.skipped > 0 ? ` · 跳过 ${stat.skipped} 个无搜索规则的源` : ''}
           </Text>
           {loading && (
@@ -354,8 +356,8 @@ export function SearchScreen() {
       )}
 
       <FlatList
-        data={results}
-        keyExtractor={(i) => i.sourceId + '|' + i.bookUrl}
+        data={groups}
+        keyExtractor={(i) => i.key}
         renderItem={renderItem}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.list}

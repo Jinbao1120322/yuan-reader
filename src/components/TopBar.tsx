@@ -1,14 +1,8 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  StatusBar,
-  Platform,
-} from 'react-native';
+import { View, TouchableOpacity, StyleSheet, StatusBar, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { APP } from '../theme/theme';
+import { Text } from './AppText';
 
 interface Props {
   title: string;

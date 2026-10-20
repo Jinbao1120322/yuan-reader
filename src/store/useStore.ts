@@ -27,6 +27,14 @@ export interface ReplaceRule {
   isRegex: boolean;
 }
 
+// 用户在 App 里导入的自定义字体
+export interface CustomFont {
+  id: string; // f + 时间戳
+  alias: string; // 注册到 expo-font 的别名，同时就是样式里的 fontFamily
+  label: string; // 显示名（文件名去后缀）
+  uri: string; // 复制到 App 沙盒后的路径，掉电不丢
+}
+
 export interface Settings {
   theme: ThemeKey;
   fontSize: number;
@@ -35,6 +43,8 @@ export interface Settings {
   pageMode: PageMode;
   replaceRules: ReplaceRule[];
   useSystemUA: boolean;
+  // 选中的自定义字体 id，空 = 跟随系统
+  fontId?: string | null;
 }
 
 interface State {
@@ -44,6 +54,10 @@ interface State {
   // 各书源历史命中次数：搜索时用来把「活着、能出结果」的源排到队首，
   // 用户不用先等几百个死站跑完才看到第一批结果
   sourceHits: Record<string, number>;
+  // 已导入的自定义字体
+  fonts: CustomFont[];
+  addFont: (f: CustomFont) => void;
+  removeFont: (id: string) => void;
   // 书源
   addSource: (s: BookSource) => void;
   removeSource: (id: string) => void;
@@ -95,6 +109,20 @@ export const useStore = create<State>()(
       shelf: [],
       settings: defaultSettings,
       sourceHits: {},
+      fonts: [],
+
+      addFont: (f) =>
+        set((st) => ({ fonts: [...st.fonts.filter((x) => x.id !== f.id), f] })),
+
+      // 删字体的同时把选中项退回系统默认，避免留下指向已删字体的 fontId
+      removeFont: (id) =>
+        set((st) => ({
+          fonts: st.fonts.filter((x) => x.id !== id),
+          settings:
+            st.settings.fontId === id
+              ? { ...st.settings, fontId: null }
+              : st.settings,
+        })),
 
       addSource: (s) =>
         set((st) => {

@@ -1,12 +1,5 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-} from 'react-native';
+import { View, FlatList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useStore, ShelfBook } from '../store/useStore';
@@ -14,6 +7,7 @@ import { BookCover } from '../components/BookCover';
 import { TopBar } from '../components/TopBar';
 import { APP } from '../theme/theme';
 import { importLocalTxt } from '../utils/localBook';
+import { Text } from '../components/AppText';
 
 export function BookshelfScreen() {
   const navigation = useNavigation<any>();

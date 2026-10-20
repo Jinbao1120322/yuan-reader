@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text, Image, StyleSheet, ImageStyle } from 'react-native';
+import { View, Image, StyleSheet, ImageStyle } from 'react-native';
 import { APP } from '../theme/theme';
+import { Text } from './AppText';
 
 interface Props {
   uri?: string;
