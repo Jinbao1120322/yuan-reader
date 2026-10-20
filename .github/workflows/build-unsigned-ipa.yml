@@ -1,9 +1,10 @@
 name: Build Unsigned iOS IPA
 
 on:
+  # 只保留手动触发：deploy.js 更新 main 后会用 workflow_dispatch 触发。
+  # 同时开 push 会让每次部署跑两个 job（push + dispatch），双倍消耗 macOS 配额
+  # （私有仓库 macOS runner 按 10 倍计费）。
   workflow_dispatch:
-  push:
-    branches: [main, master]
 
 jobs:
   build-ipa:
