@@ -5,7 +5,10 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
+
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 
 import { BookshelfScreen } from './src/screens/BookshelfScreen';
 import { SourcesScreen } from './src/screens/SourcesScreen';
@@ -52,17 +55,21 @@ function SearchTab() {
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        <StatusBar style="light" />
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="Main" component={TabNavigator} />
-          <Stack.Screen name="Search" component={SearchScreen} />
-          <Stack.Screen name="BookDetail" component={BookDetailScreen} />
-          <Stack.Screen name="Reader" component={ReaderScreen} />
-        </Stack.Navigator>
-      </NavigationContainer>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <ErrorBoundary>
+          <NavigationContainer>
+            <StatusBar style="light" />
+            <Stack.Navigator screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="Main" component={TabNavigator} />
+              <Stack.Screen name="Search" component={SearchScreen} />
+              <Stack.Screen name="BookDetail" component={BookDetailScreen} />
+              <Stack.Screen name="Reader" component={ReaderScreen} />
+            </Stack.Navigator>
+          </NavigationContainer>
+        </ErrorBoundary>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
