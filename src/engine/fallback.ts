@@ -202,9 +202,13 @@ export function pickBestChapters(
   let bestScore = 0;
   for (const p of pages) {
     const ch = guessChapters(p.html, p.url);
-    if (ch.length < 3) continue;
+    if (ch.length < 5) continue;
     const ratio =
       ch.filter((c) => CHAP_NAME_RE.test(c.name)).length / ch.length;
+    // 详情页上零散的几个链接（「开始阅读」「加入书架」之类）也会被猜成"章节"，
+    // 门槛松了就会把三五条垃圾当成目录返回，用户看到的就是"这本书只有几章"。
+    // 要求：至少 5 条，且六成以上的标题确实长得像章节名。
+    if (ratio < 0.6) continue;
     const score = ch.length * (0.4 + ratio);
     if (score > bestScore) {
       bestScore = score;

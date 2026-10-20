@@ -351,15 +351,20 @@ export async function getToc(
     if (exist) return exist;
     if (pages.length >= MAX_TOC_PAGES) return null;
     seen.add(u);
-    try {
-      const html = await fetchHtml(u, source, 'GET', 10000);
-      if (!html) return null;
-      const p = { url: u, html };
-      pages.push(p);
-      return p;
-    } catch {
-      return null;
+    // 目录页往往比详情页大得多（几十上百 KB），10 秒超时在手机上容易不够；
+    // 失败一次就重试，避免整章目录因为一次抖动直接变空
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const html = await fetchHtml(u, source, 'GET', 20000);
+        if (!html) continue;
+        const p = { url: u, html };
+        pages.push(p);
+        return p;
+      } catch {
+        /* 再试一次 */
+      }
     }
+    return null;
   };
 
   // 每页按规则解析，结果挂在 parsed 上（同一页只解析一次）
