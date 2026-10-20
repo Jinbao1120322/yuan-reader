@@ -47,6 +47,9 @@ interface State {
   // 书源
   addSource: (s: BookSource) => void;
   removeSource: (id: string) => void;
+  // 批量删除：检测书源时会一次删掉成百上千个，逐个 removeSource 会触发同等次数的
+  // 持久化写入，直接把 JS 线程堵死，所以必须一次性 set。
+  removeSources: (ids: string[]) => void;
   toggleSource: (id: string) => void;
   setAllSourcesEnabled: (enabled: boolean) => void;
   importSources: (list: BookSource[]) => number;
@@ -69,7 +72,10 @@ function normalizeSource(s: BookSource): BookSource {
   return {
     ...s,
     _id: s.bookSourceUrl,
-    _enabled: s.enabled !== false,
+    // 已经是内部对象（比如检测后撤销删除、或从备份恢复）就沿用原来的启用状态，
+    // 不要被 enabled 字段重置，否则用户手动停用过的源会莫名变回启用。
+    _enabled:
+      typeof s._enabled === 'boolean' ? s._enabled : s.enabled !== false,
   };
 }
 
@@ -98,6 +104,13 @@ export const useStore = create<State>()(
 
       removeSource: (id) =>
         set((st) => ({ sources: st.sources.filter((x) => x._id !== id) })),
+
+      removeSources: (ids) =>
+        set((st) => {
+          if (!ids.length) return {};
+          const dead = new Set(ids);
+          return { sources: st.sources.filter((x) => !dead.has(x._id!)) };
+        }),
 
       toggleSource: (id) =>
         set((st) => ({

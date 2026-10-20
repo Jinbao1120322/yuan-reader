@@ -305,8 +305,11 @@ export function PageCurlView(props: Props) {
     lineHeight: fontSize * lineHeight,
   };
 
+  // 每份页面必须自带不透明底色。
+  // 底层（还没翻到的那页）永远铺在最下面，如果上面的页面是透明的，
+  // 两页文字就会叠印在一起 —— 看上去像「第二页的字印到了上一页」。
   const pageBody = (text: string) => (
-    <View style={[styles.page, { width: areaW, height: areaH }]}>
+    <View style={[styles.page, { width: areaW, height: areaH, backgroundColor: theme.bg }]}>
       <Text style={[styles.pageText, textStyle]}>{text || ' '}</Text>
     </View>
   );
@@ -439,7 +442,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 40,
-    backgroundColor: 'transparent',
   },
   pageText: { textAlign: 'left' },
   flat: { position: 'absolute', left: 0, top: 0, overflow: 'hidden' },

@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
   FlatList,
+  ScrollView,
   TouchableOpacity,
   StyleSheet,
   Alert,
@@ -24,6 +25,16 @@ import { APP } from '../theme/theme';
 import { TopBar } from '../components/TopBar';
 import { readLocalText } from '../utils/localBook';
 import { parseSourceText } from '../utils/parseSources';
+import {
+  CheckItem,
+  CHECK_KEYWORD,
+  emptyTally,
+  REMOVABLE,
+  runCheck,
+  searchable,
+  Tally,
+  VERDICT_LABEL,
+} from '../utils/checkSources';
 
 // iOS 键盘上方那条「完成」工具条的 id
 const KEYBOARD_DONE_ID = 'sources-import-done';
@@ -42,6 +53,30 @@ export function SourcesScreen() {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<FilterKey>('all');
+
+  // —— 书源检测 ——
+  const [checking, setChecking] = useState(false);
+  const [tally, setTally] = useState<Tally | null>(null);
+  const [report, setReport] = useState<CheckItem[] | null>(null);
+  const [reportStopped, setReportStopped] = useState(false);
+  // 被自动删掉的书源原对象，用来「撤销删除」
+  const [removed, setRemoved] = useState<BookSource[]>([]);
+  // 中途停止时待确认的删除（停止不自动删，等用户看完再决定）
+  const [pending, setPending] = useState<{ ids: string[]; objs: BookSource[] } | null>(
+    null
+  );
+  const cancelRef = useRef(false);
+  const aliveRef = useRef(true);
+
+  useEffect(
+    () => () => {
+      // 离开页面：停掉还在跑的检测。已经判定为无效的源在开始时就会照常删除，
+      // 删除动作不依赖组件存活，所以这里只是省电、不丢结果。
+      aliveRef.current = false;
+      cancelRef.current = true;
+    },
+    []
+  );
 
   const enabledCount = useMemo(
     () => sources.reduce((n, s) => (s._enabled ? n + 1 : n), 0),
@@ -77,6 +112,111 @@ export function SourcesScreen() {
         { text: '确定停用', style: 'destructive', onPress: () => setAllSourcesEnabled(false) },
       ]
     );
+  };
+
+  // —— 书源检测 ——
+  //
+  // 判定「有没有用」的唯一标准是能不能真的搜到书，不是站点活着。
+  // 搜不到 / 站点报错 / 域名连不上 / 没有搜索规则 → 自动删除；只有超时的不删。
+  // 完整跑完才自动删；中途停止不删，把结果列出来让用户自己决定。
+  const startCheck = () => {
+    if (checking) return;
+    const list = shown;
+    if (!list.length) {
+      Alert.alert('没有可检测的书源', '当前这一栏是空的');
+      return;
+    }
+    // 没有搜索规则的源也要真的进检测队列 —— 它们会判成 skip 并被删除。
+    // 之前是把它们提前滤掉，那样根本进不了结果集，也就删不到。
+    const noRule = list.length - list.filter(searchable).length;
+
+    Alert.alert(
+      '检测书源',
+      `将用关键词「${CHECK_KEYWORD}」逐个检测当前列表里的 ${list.length} 个书源。\n\n` +
+        '· 搜不到书、站点报错、域名连不上 → 自动删除\n' +
+        '· 没有搜索规则（搜不了书）→ 也删除' +
+        (noRule ? `，本次有 ${noRule} 个` : '') +
+        '\n' +
+        '· 超时 → 保留（可能只是网络慢）\n' +
+        (noRule === list.length
+          ? '\n⚠️ 当前列表里的书源全都没有搜索规则，检测后会被全部删除。\n'
+          : '') +
+        `\n预计 ${Math.max(5, Math.ceil((list.length / 12) * 2.5))} 秒左右，随时可停止。`,
+      [
+        { text: '取消', style: 'cancel' },
+        { text: '只测搜索', onPress: () => runDetection(list, false) },
+        {
+          text: '连目录一起测（准，但慢很多）',
+          onPress: () => runDetection(list, true),
+        },
+      ]
+    );
+  };
+
+  const runDetection = async (list: BookSource[], deep: boolean) => {
+    cancelRef.current = false;
+    setChecking(true);
+    setReport(null);
+    setRemoved([]);
+    setPending(null);
+    setTally(emptyTally(list.length));
+
+    // 存原对象而不是 id：撤销时要把 _enabled 等状态原样放回去
+    const snapshot = list.slice();
+    let results: CheckItem[] = [];
+    try {
+      results = await runCheck(list, {
+        keyword: CHECK_KEYWORD,
+        deep,
+        isCancelled: () => cancelRef.current,
+        onProgress: (t) => {
+          if (aliveRef.current) setTally(t);
+        },
+      });
+    } catch (e: any) {
+      if (aliveRef.current) setChecking(false);
+      Alert.alert('检测中断', e?.message || String(e));
+      return;
+    }
+
+    const dead = results.filter((r) => REMOVABLE.includes(r.verdict));
+    const deadSet = new Set(dead.map((r) => r.id));
+    const objs = snapshot.filter((s) => deadSet.has(s._id!));
+    const stopped = cancelRef.current;
+
+    // 走 store 直接删，不依赖组件是否还挂载
+    if (!stopped && dead.length) useStore.getState().removeSources(dead.map((r) => r.id));
+
+    if (!aliveRef.current) return;
+    setChecking(false);
+    setReportStopped(stopped);
+    if (stopped) {
+      // 中途停止：不删，等用户看完再决定
+      setPending(dead.length ? { ids: dead.map((r) => r.id), objs } : null);
+    } else {
+      setRemoved(objs);
+      setPending(null);
+    }
+    setReport(results);
+  };
+
+  const stopCheck = () => {
+    cancelRef.current = true;
+  };
+
+  // 停止后手动确认删除
+  const deletePending = () => {
+    if (!pending) return;
+    useStore.getState().removeSources(pending.ids);
+    setRemoved(pending.objs);
+    setPending(null);
+  };
+
+  const undoRemove = () => {
+    if (!removed.length) return;
+    // importSources 内部按 bookSourceUrl 去重，且保留 _enabled，原样放回
+    importSources(removed);
+    setRemoved([]);
   };
 
   // 统一走 parseSourceText：标准 JSON、二次转义、每行一条、夹着杂字都能认
@@ -200,9 +340,16 @@ export function SourcesScreen() {
 
       <View style={styles.head}>
         <Text style={styles.stat} numberOfLines={1}>
-          共 {sources.length} 个 · 已启用 {enabledCount} 个
+          {sources.length} 个 · 启用 {enabledCount}
         </Text>
         <View style={styles.headBtns}>
+          <TouchableOpacity
+            style={[styles.miniBtn, checking && styles.miniDim]}
+            onPress={startCheck}
+            disabled={checking}
+          >
+            <Text style={styles.miniText}>{checking ? '检测中' : '检测'}</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.miniBtn} onPress={enableAll}>
             <Text style={styles.miniText}>全开</Text>
           </TouchableOpacity>
@@ -214,6 +361,28 @@ export function SourcesScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {checking && tally && (
+        <View style={styles.progWrap}>
+          <View style={styles.progTrack}>
+            <View
+              style={[
+                styles.progFill,
+                { width: `${Math.round((tally.done / Math.max(1, tally.total)) * 100)}%` },
+              ]}
+            />
+          </View>
+          <View style={styles.progRow}>
+            <Text style={styles.progText} numberOfLines={1}>
+              已检测 {tally.done}/{tally.total} · 有效 {tally.ok} · 无效 {tally.dead}
+              {tally.timeout ? ` · 超时 ${tally.timeout}` : ''}
+            </Text>
+            <TouchableOpacity onPress={stopCheck} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.progStop}>停止</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       <View style={styles.filterRow}>
         {(
@@ -234,7 +403,8 @@ export function SourcesScreen() {
       </View>
 
       <Text style={styles.note}>
-        开关打开（已启用）的书源才会参与搜索和换源；关掉只是暂时不用，不会删除。
+        开关打开（已启用）的书源才参与搜索和换源。「检测」会把当前列表试一遍：
+        搜不到书、站点报错、连不上、没有搜索规则的书源自动删除（可撤销），只有超时的保留。
       </Text>
 
       <FlatList
@@ -346,6 +516,118 @@ export function SourcesScreen() {
           </InputAccessoryView>
         )}
       </Modal>
+
+      {/* 检测结果面板。比 Alert 好用：能列出被删掉的源，还能一键撤销 */}
+      <Modal
+        visible={!!report}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReport(null)}
+      >
+        <View style={styles.repMask}>
+          <View style={styles.repCard}>
+            <Text style={styles.repTitle}>
+              {reportStopped ? '检测已停止' : '检测完成'}
+            </Text>
+
+            {(() => {
+              const all = report || [];
+              const ok = all.filter((r) => r.verdict === 'ok').length;
+              const dead = all.filter((r) => REMOVABLE.includes(r.verdict));
+              const timeout = all.filter((r) => r.verdict === 'timeout').length;
+              const skip = all.filter((r) => r.verdict === 'skip').length;
+              return (
+                <>
+                  <Text style={styles.repSummary}>
+                    共检测 {all.length} 个 · 有效 {ok} 个
+                    {dead.length ? ` · 无效 ${dead.length} 个` : ''}
+                    {timeout ? ` · 超时 ${timeout} 个` : ''}
+                    {skip ? ` · 无搜索规则 ${skip} 个` : ''}
+                  </Text>
+
+                  {dead.length > 0 ? (
+                    <>
+                      <Text style={styles.repSub}>
+                        {pending
+                          ? `这 ${dead.length} 个书源搜不到书或站点不通，还没删除：`
+                          : removed.length
+                          ? `已删除这 ${removed.length} 个书源：`
+                          : `这次没有删除书源，下面 ${dead.length} 个是判定为无效的：`}
+                      </Text>
+                      <ScrollView style={styles.repList} contentContainerStyle={{ paddingBottom: 4 }}>
+                        {dead.slice(0, 300).map((r) => (
+                          <View key={r.id} style={styles.repItem}>
+                            <Text style={styles.repName} numberOfLines={1}>
+                              {r.name}
+                            </Text>
+                            <Text style={styles.repMeta} numberOfLines={1}>
+                              {VERDICT_LABEL[r.verdict]} · {r.host}
+                            </Text>
+                          </View>
+                        ))}
+                        {dead.length > 300 && (
+                          <Text style={styles.repMore}>…还有 {dead.length - 300} 个</Text>
+                        )}
+                      </ScrollView>
+                    </>
+                  ) : (
+                    <Text style={styles.repSub}>
+                      {all.length
+                        ? '没有发现失效的书源，一个都没删。'
+                        : '没有检测到任何书源。'}
+                    </Text>
+                  )}
+
+                  {timeout > 0 && (
+                    <Text style={styles.repHint}>
+                      超时的书源已保留 —— 可能只是这一刻网络慢，可以稍后单独再测一次。
+                    </Text>
+                  )}
+                </>
+              );
+            })()}
+
+            <View style={styles.repBtns}>
+              {pending ? (
+                <>
+                  <TouchableOpacity
+                    style={[styles.repBtn, styles.repGhost]}
+                    onPress={() => {
+                      setPending(null);
+                      setReport(null);
+                    }}
+                  >
+                    <Text style={styles.repGhostText}>保留全部</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.repBtn, styles.repDanger]}
+                    onPress={deletePending}
+                  >
+                    <Text style={styles.repDangerText}>删除这 {pending.ids.length} 个</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  {removed.length > 0 && (
+                    <TouchableOpacity
+                      style={[styles.repBtn, styles.repGhost]}
+                      onPress={undoRemove}
+                    >
+                      <Text style={styles.repGhostText}>撤销删除</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={[styles.repBtn, styles.repPrimary]}
+                    onPress={() => setReport(null)}
+                  >
+                    <Text style={styles.repPrimaryText}>完成</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -406,6 +688,84 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: APP.border,
   },
+  // —— 检测进度 ——
+  miniDim: { opacity: 0.55 },
+  progWrap: { paddingHorizontal: 16, paddingBottom: 8 },
+  progTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: APP.card2,
+    overflow: 'hidden',
+  },
+  progFill: { height: 4, borderRadius: 2, backgroundColor: APP.accent },
+  progRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 7,
+  },
+  progText: { flex: 1, color: APP.sub, fontSize: 12 },
+  progStop: { color: APP.danger, fontSize: 13, fontWeight: '600', marginLeft: 10 },
+  // —— 检测结果面板 ——
+  repMask: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.62)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  repCard: {
+    width: '100%',
+    maxHeight: '82%',
+    backgroundColor: APP.card,
+    borderRadius: 16,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 14,
+    borderWidth: 1,
+    borderColor: APP.border,
+  },
+  repTitle: { color: APP.text, fontSize: 18, fontWeight: '700', marginBottom: 8 },
+  repSummary: { color: APP.text, fontSize: 14, lineHeight: 20 },
+  repSub: { color: APP.sub, fontSize: 13, lineHeight: 19, marginTop: 10 },
+  repList: {
+    marginTop: 8,
+    maxHeight: 260,
+    borderTopWidth: 1,
+    borderColor: APP.border,
+  },
+  repItem: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderColor: APP.border,
+  },
+  repName: { color: APP.text, fontSize: 14 },
+  repMeta: { color: APP.sub, fontSize: 11, marginTop: 3 },
+  repMore: { color: APP.sub, fontSize: 12, paddingVertical: 8 },
+  repHint: {
+    color: APP.sub,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 10,
+    backgroundColor: APP.card2,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  repBtns: { flexDirection: 'row', marginTop: 14 },
+  repBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginHorizontal: 5,
+  },
+  repGhost: { backgroundColor: APP.card2, borderWidth: 1, borderColor: APP.border },
+  repGhostText: { color: APP.text, fontSize: 15, fontWeight: '600' },
+  repPrimary: { backgroundColor: APP.accent },
+  repPrimaryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  repDanger: { backgroundColor: APP.danger },
+  repDangerText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   btnText: { color: APP.text, fontSize: 14 },
   list: { padding: 16 },
   item: {
