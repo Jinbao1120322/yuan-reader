@@ -9,12 +9,22 @@ import {
   TextInput,
   Modal,
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  InputAccessoryView,
 } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
 import { useStore } from '../store/useStore';
 import { BookSource } from '../engine/types';
 import { SAMPLE_SOURCE } from '../sources/sampleSource';
 import { APP } from '../theme/theme';
 import { TopBar } from '../components/TopBar';
+import { readLocalText } from '../utils/localBook';
+
+// iOS 键盘上方那条「完成」工具条的 id
+const KEYBOARD_DONE_ID = 'sources-import-done';
 
 export function SourcesScreen() {
   const sources = useStore((s) => s.sources);
@@ -42,6 +52,7 @@ export function SourcesScreen() {
       const list: BookSource[] = Array.isArray(parsed) ? parsed : [parsed];
       const added = importSources(list);
       Alert.alert('导入完成', `新增 ${added} 个书源（已存在的自动跳过）`);
+      Keyboard.dismiss();
       setModal(false);
       setText('');
     } catch (e: any) {
@@ -54,6 +65,52 @@ export function SourcesScreen() {
   const addSample = () => {
     addSource(SAMPLE_SOURCE);
     Alert.alert('已添加', '示例书源已加入，可在搜索页试用');
+  };
+
+  const closeModal = () => {
+    Keyboard.dismiss();
+    setModal(false);
+  };
+
+  // 从「文件」里挑 .json 书源文件导入。
+  // 用 readLocalText（内部 utf-8 优先、失败退回 gbk）读，社区书源里 GBK 编码的不少。
+  const pickFromFile = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['application/json', 'text/plain'],
+        copyToCacheDirectory: true,
+        multiple: true,
+      });
+      if (res.canceled || !res.assets?.length) return;
+
+      setLoading(true);
+      let total = 0;
+      const fails: string[] = [];
+      for (const asset of res.assets) {
+        try {
+          const raw = await readLocalText(asset.uri);
+          const parsed = JSON.parse(raw);
+          const list: BookSource[] = Array.isArray(parsed) ? parsed : [parsed];
+          total += importSources(list);
+        } catch (e: any) {
+          fails.push(`${asset.name}：${e?.message || '不是合法的 JSON'}`);
+        }
+      }
+      setLoading(false);
+
+      if (total > 0) {
+        Keyboard.dismiss();
+        setModal(false);
+      }
+      Alert.alert(
+        total > 0 ? '导入完成' : '没能导入',
+        `新增 ${total} 个书源（已存在的自动跳过）` +
+          (fails.length ? `\n\n失败 ${fails.length} 个：\n${fails.join('\n')}` : '')
+      );
+    } catch (e: any) {
+      setLoading(false);
+      Alert.alert('选择文件失败', e?.message || String(e));
+    }
   };
 
   const renderItem = ({ item }: { item: BookSource }) => (
@@ -112,18 +169,39 @@ export function SourcesScreen() {
           <View style={styles.empty}>
             <Text style={styles.emptyText}>还没有书源</Text>
             <Text style={styles.emptySub}>
-              点「导入」粘贴社区书源 JSON，或加「示例源」体验
+              点「导入」可以粘贴 JSON、粘链接，或从「文件」里选 .json
             </Text>
           </View>
         }
       />
 
-      <Modal visible={modal} transparent animationType="slide">
-        <View style={styles.modalMask}>
-          <View style={styles.modal}>
-            <Text style={styles.modalTitle}>导入书源</Text>
+      <Modal
+        visible={modal}
+        transparent
+        animationType="slide"
+        onRequestClose={closeModal}
+      >
+        {/*
+          键盘处理：
+          - KeyboardAvoidingView 让面板整体抬到键盘上方，输入框不会被挡住
+          - 点面板外的暗色区域收起键盘（Pressable 在面板下方，不挡输入）
+          - iOS 额外给一条键盘上方的「完成」工具条，多点保险
+        */}
+        <KeyboardAvoidingView
+          style={styles.kavWrap}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <Pressable style={styles.modalMask} onPress={Keyboard.dismiss} />
+
+          <View style={styles.sheet}>
+            <View style={styles.sheetHead}>
+              <Text style={styles.modalTitle}>导入书源</Text>
+              <TouchableOpacity onPress={closeModal} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                <Text style={styles.closeText}>关闭</Text>
+              </TouchableOpacity>
+            </View>
             <Text style={styles.modalHint}>
-              粘贴书源 JSON（单个或数组），或粘贴一个 .json 链接
+              粘贴书源 JSON（单个或数组）、粘贴 .json 链接，或直接从「文件」里选
             </Text>
             <TextInput
               style={styles.input}
@@ -134,12 +212,27 @@ export function SourcesScreen() {
               multiline
               autoCapitalize="none"
               autoCorrect={false}
-              numberOfLines={8}
+              spellCheck={false}
+              inputAccessoryViewID={Platform.OS === 'ios' ? KEYBOARD_DONE_ID : undefined}
             />
+
+            <View style={styles.quickRow}>
+              <TouchableOpacity
+                style={[styles.quickBtn, loading && styles.quickBtnDim]}
+                onPress={pickFromFile}
+                disabled={loading}
+              >
+                <Text style={styles.quickText}>📁 从文件导入</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.quickBtn} onPress={Keyboard.dismiss}>
+                <Text style={styles.quickText}>⌨ 收起键盘</Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.modalBtns}>
               <TouchableOpacity
                 style={[styles.mbtn, styles.mcancel]}
-                onPress={() => setModal(false)}
+                onPress={closeModal}
               >
                 <Text style={styles.btnText}>取消</Text>
               </TouchableOpacity>
@@ -156,7 +249,17 @@ export function SourcesScreen() {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
+
+        {Platform.OS === 'ios' && (
+          <InputAccessoryView nativeID={KEYBOARD_DONE_ID}>
+            <View style={styles.accessory}>
+              <TouchableOpacity onPress={Keyboard.dismiss}>
+                <Text style={styles.accessoryText}>完成</Text>
+              </TouchableOpacity>
+            </View>
+          </InputAccessoryView>
+        )}
       </Modal>
     </View>
   );
@@ -213,30 +316,66 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', marginTop: 80 },
   emptyText: { color: APP.text, fontSize: 17 },
   emptySub: { color: APP.sub, fontSize: 13, marginTop: 8, textAlign: 'center', paddingHorizontal: 30 },
+  kavWrap: { flex: 1, justifyContent: 'flex-end' },
+  // 面板外的暗色区域：铺满整屏，点一下收键盘
   modalMask: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
   },
-  modal: {
+  sheet: {
     backgroundColor: APP.card,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
-    padding: 20,
-    paddingBottom: 30,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 26,
+    borderTopWidth: 1,
+    borderColor: APP.border,
   },
-  modalTitle: { color: APP.text, fontSize: 18, fontWeight: '700', marginBottom: 8 },
-  modalHint: { color: APP.sub, fontSize: 13, marginBottom: 12 },
+  sheetHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  closeText: { color: APP.sub, fontSize: 15 },
+  modalTitle: { color: APP.text, fontSize: 18, fontWeight: '700' },
+  modalHint: { color: APP.sub, fontSize: 13, marginBottom: 12, lineHeight: 19 },
   input: {
     backgroundColor: APP.bg,
     color: APP.text,
     borderRadius: 10,
     padding: 12,
-    height: 140,
+    minHeight: 92,
+    maxHeight: 150,
     textAlignVertical: 'top',
     borderWidth: 1,
     borderColor: APP.border,
+    fontSize: 13,
   },
+  quickRow: { flexDirection: 'row', marginTop: 12 },
+  quickBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 9,
+    alignItems: 'center',
+    backgroundColor: APP.card2,
+    borderWidth: 1,
+    borderColor: APP.border,
+    marginHorizontal: 5,
+  },
+  quickBtnDim: { opacity: 0.5 },
+  quickText: { color: APP.text, fontSize: 14 },
+  accessory: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: APP.card2,
+    borderTopWidth: 1,
+    borderColor: APP.border,
+  },
+  accessoryText: { color: APP.accent, fontSize: 16, fontWeight: '700' },
   modalBtns: { flexDirection: 'row', marginTop: 14 },
   mbtn: {
     flex: 1,

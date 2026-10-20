@@ -131,10 +131,10 @@ jobs:
           BUNDLE=$(find ios/build/App.xcarchive/Products/Applications -maxdepth 2 -name 'main.jsbundle' | head -n1)
           echo "bundle: $BUNDLE"
           if [ -z "$BUNDLE" ]; then echo "ERROR: main.jsbundle 不存在"; exit 1; fi
-          if grep -aq '1.0.6.7' "$BUNDLE"; then
-            echo "OK: bundle 含版本戳 1.0.6.7"
+          if grep -aq '1.0.7.8' "$BUNDLE"; then
+            echo "OK: bundle 含版本戳 1.0.7.8"
           else
-            echo "ERROR: bundle 不含版本戳 1.0.6.7 —— 打包用的是旧 index.js"
+            echo "ERROR: bundle 不含版本戳 1.0.7.8 —— 打包用的是旧 index.js"
             exit 1
           fi
 

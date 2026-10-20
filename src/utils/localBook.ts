@@ -31,16 +31,39 @@ const textCache = new Map<string, string>();
 // 章节文本缓存（按 uri），key=uri
 const chapterCache = new Map<string, string[]>();
 
+// expo-file-system 懒加载（只在 fetch 读不了 file:// 时才用到）
+function fsLib(): any {
+  const m: any = require('expo-file-system');
+  return m && m.default ? { ...m.default, ...m } : m;
+}
+
+// 读出文件原始字节。
+// 优先 fetch（DocumentPicker 的 file:// 在多数环境下可用）；失败再退到
+// expo-file-system 以 base64 读，兼容 fetch 不支持 file:// 的情况。
+async function readBytes(uri: string): Promise<Buffer> {
+  try {
+    const resp = await fetch(uri);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const ab = await resp.arrayBuffer();
+    return Buffer.from(ab);
+  } catch (e) {
+    const FS = fsLib();
+    const b64: string = await FS.readAsStringAsync(uri, {
+      encoding: FS.EncodingType.Base64,
+    });
+    return Buffer.from(b64, 'base64');
+  }
+}
+
 export async function readLocalText(uri: string): Promise<string> {
   if (textCache.has(uri)) return textCache.get(uri)!;
-  const resp = await fetch(uri);
-  const buf = await resp.arrayBuffer();
+  const bytes = await readBytes(uri);
   // 先按 utf-8 解码，若出现大量替换符则尝试 gbk
-  let text = iconvLib().decode(Buffer.from(buf), 'utf-8');
+  let text = iconvLib().decode(bytes, 'utf-8');
   const bad = (text.match(/\ufffd/g) || []).length;
   if (bad > 20) {
     try {
-      text = iconvLib().decode(Buffer.from(buf), 'gbk');
+      text = iconvLib().decode(bytes, 'gbk');
     } catch {
       /* keep utf-8 */
     }
