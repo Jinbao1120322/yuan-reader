@@ -61,6 +61,8 @@ export interface Settings {
   theme: ThemeKey;
   fontSize: number;
   lineHeight: number;
+  paraIndent: boolean; // 段首缩进两字
+  paraGap: number; // 段落之间空几行
   bgColor?: string;
   pageMode: PageMode;
   replaceRules: ReplaceRule[];
@@ -119,6 +121,8 @@ const defaultSettings: Settings = {
   theme: 'day',
   fontSize: 18,
   lineHeight: 1.8,
+  paraIndent: true,
+  paraGap: 1,
   pageMode: 'scroll',
   replaceRules: [],
   useSystemUA: true,

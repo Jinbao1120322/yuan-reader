@@ -14,6 +14,7 @@ import {
   getLocalChapterText,
 } from '../utils/localBook';
 import { paginate } from '../utils/paginate';
+import { trimPageEdges, typeset } from '../utils/typeset';
 import { SourceSwitchSheet } from '../components/SourceSwitchSheet';
 import { SearchBook } from '../engine/types';
 import { matchChapterIndex } from '../utils/bookMatch';
@@ -103,6 +104,17 @@ const styles = StyleSheet.create({
   },
   switchSub: { color: APP.sub, fontSize: 11, marginTop: 3 },
   switchGo: { color: APP.accent, fontSize: 14, fontWeight: '700' },
+  switchPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: APP.card2,
+    borderWidth: 1,
+    borderColor: APP.border,
+  },
+  switchPillOn: { backgroundColor: APP.accent, borderColor: APP.accent },
+  switchPillText: { color: APP.sub, fontSize: 13, fontWeight: '600' },
+  switchPillTextOn: { color: '#fff' },
   themes: { flexDirection: 'row' },
   themeDot: {
     width: 30,
@@ -202,6 +214,17 @@ export function ReaderScreen() {
   // 实测「一行能放几个字」。字体不同字宽差很多，靠估算必然失准
   // （换自定义字体后估 17 字、实际只放得下 16 字，每行最后一个字被挤到下一行单独成行）。
   const [charsPerLine, setCharsPerLine] = useState(0);
+  // 排版后的正文：段首缩进 + 段落留白。
+  // 测量层和渲染层都用这一份，否则分页会按一种文本算、显示另一种。
+  const displayText = useMemo(
+    () =>
+      typeset(content, {
+        indent: settings.paraIndent !== false,
+        paraGap: settings.paraGap ?? 1,
+      }),
+    [content, settings.paraIndent, settings.paraGap]
+  );
+
   // 真实排版测量出的每一行（y/height 由原生排版给出）。
   // 用它切页才能把页面排满 —— 按「能放几行」估算永远会低估，底部就空一块。
   const [measuredLines, setMeasuredLines] = useState<
@@ -393,17 +416,17 @@ export function ReaderScreen() {
       for (const ln of measuredLines) {
         const bottom = ln.y + (ln.h > 0 ? ln.h : H / 10) - baseY;
         if (cur.length && bottom > H + 0.5) {
-          out.push(cur.join('\n'));
+          out.push(trimPageEdges(cur.join('\n')));
           cur = [];
           baseY = ln.y;
         }
         cur.push(ln.text);
       }
-      if (cur.length) out.push(cur.join('\n'));
-      if (out.length) return out;
+      if (cur.length) out.push(trimPageEdges(cur.join('\n')));
+      if (out.length) return out.filter((p) => p.trim().length > 0);
     }
 
-    return paginate(content, {
+    return paginate(displayText, {
       fontSize: settings.fontSize,
       lineHeight: settings.lineHeight,
       width: pageTextWidth(area.w),
@@ -420,6 +443,7 @@ export function ReaderScreen() {
     settings.fontId,
     charsPerLine,
     measuredLines,
+    displayText,
     isPaged,
   ]);
 
@@ -607,7 +631,7 @@ export function ReaderScreen() {
               );
             }}
           >
-            {content}
+            {displayText}
           </Text>
         </View>
       )}
@@ -716,7 +740,7 @@ export function ReaderScreen() {
                 },
               ]}
             >
-              {content}
+              {displayText}
             </Text>
           </ScrollView>
         </View>
@@ -910,6 +934,55 @@ export function ReaderScreen() {
                   <Text style={styles.stepText}>＋</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+            <View style={styles.row}>
+              <Text style={styles.menuLabel}>段间距</Text>
+              <View style={styles.stepper}>
+                <TouchableOpacity
+                  style={styles.step}
+                  onPress={() =>
+                    updateSettings({
+                      paraGap: Math.max(0, (settings.paraGap ?? 1) - 1),
+                    })
+                  }
+                >
+                  <Text style={styles.stepText}>－</Text>
+                </TouchableOpacity>
+                <Text style={[styles.menuVal, { color: APP.text }]}>
+                  {(settings.paraGap ?? 1) === 0 ? '紧贴' : `空 ${settings.paraGap ?? 1} 行`}
+                </Text>
+                <TouchableOpacity
+                  style={styles.step}
+                  onPress={() =>
+                    updateSettings({
+                      paraGap: Math.min(2, (settings.paraGap ?? 1) + 1),
+                    })
+                  }
+                >
+                  <Text style={styles.stepText}>＋</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={styles.row}>
+              <Text style={styles.menuLabel}>段首缩进</Text>
+              <TouchableOpacity
+                style={[
+                  styles.switchPill,
+                  settings.paraIndent !== false && styles.switchPillOn,
+                ]}
+                onPress={() =>
+                  updateSettings({ paraIndent: settings.paraIndent === false })
+                }
+              >
+                <Text
+                  style={[
+                    styles.switchPillText,
+                    settings.paraIndent !== false && styles.switchPillTextOn,
+                  ]}
+                >
+                  {settings.paraIndent !== false ? '两字缩进' : '顶格'}
+                </Text>
+              </TouchableOpacity>
             </View>
             <View style={styles.row}>
               <Text style={styles.menuLabel}>主题</Text>

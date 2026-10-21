@@ -2,7 +2,7 @@
   "expo": {
     "name": "源阅读",
     "slug": "yuan-reader",
-    "version": "1.0.20",
+    "version": "1.0.21",
     "orientation": "portrait",
     "scheme": "yuanreader",
     "userInterfaceStyle": "automatic",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.yuan.reader",
-      "buildNumber": "21",
+      "buildNumber": "22",
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
@@ -25,7 +25,7 @@
     },
     "android": {
       "package": "com.yuan.reader",
-      "versionCode": 20
+      "versionCode": 21
     },
     "web": {
       "bundler": "metro"
