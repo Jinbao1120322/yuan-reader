@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Image } from 'react-native';
 import Animated, {
   Extrapolation,
   interpolate,
@@ -84,6 +84,7 @@ interface CurlSlice {
  */
 const PageLayer = React.memo(function PageLayer({
   text,
+  imageUri,
   width,
   height,
   bg,
@@ -92,6 +93,7 @@ const PageLayer = React.memo(function PageLayer({
   textStyle,
 }: {
   text: string;
+  imageUri?: string;
   width: number;
   height: number;
   bg: string;
@@ -99,6 +101,23 @@ const PageLayer = React.memo(function PageLayer({
   padBottom: number;
   textStyle: any;
 }) {
+  /*
+   * 有预渲染好的位图就直接贴图 —— 这是「爱阅书香」的做法：
+   * 翻页期间完全不碰文字排版，只对一张图做几何变换，物理上不可能出现空白。
+   * 没有图时才退回实时渲染文字（首屏、刚换章、刚换字号的那一下）。
+   */
+  if (imageUri) {
+    return (
+      <View style={[styles.page, { width, height, backgroundColor: bg }]}>
+        <Image
+          source={{ uri: imageUri }}
+          style={{ width, height }}
+          resizeMode="cover"
+          fadeDuration={0}
+        />
+      </View>
+    );
+  }
   return (
     <View
       style={[
@@ -144,6 +163,8 @@ interface Props {
   headerH?: number;
   /** 页脚占位高度，0 = 不显示页脚 */
   footerH?: number;
+  /** 页号 → 预渲染位图 URI。有图就贴图，翻页期间不碰文字排版 */
+  images?: Record<number, string>;
 }
 
 export function PageCurlView(props: Props) {
@@ -158,6 +179,7 @@ export function PageCurlView(props: Props) {
     areaH,
     headerH = PAGE_HEADER_H,
     footerH = PAGE_FOOTER_H,
+    images,
   } = props;
 
   const AW = Math.max(areaW, 1);
@@ -427,9 +449,10 @@ export function PageCurlView(props: Props) {
   // 每份页面必须自带不透明底色。
   // 底层（还没翻到的那页）永远铺在最下面，如果上面的页面是透明的，
   // 两页文字就会叠印在一起 —— 看上去像「第二页的字印到了上一页」。
-  const pageBody = (text: string) => (
+  const pageBody = (text: string, pageIdx: number) => (
     <PageLayer
       text={text}
+      imageUri={images?.[pageIdx]}
       width={areaW}
       height={areaH}
       bg={theme.bg}
@@ -442,6 +465,9 @@ export function PageCurlView(props: Props) {
   // simulate：翻下一页时上层是当前页、底层是下一页；翻上一页时上层是上一页、底层是当前页。
   // slide：当前页直接平移走，底层换成真正该露出的那一页。
   const sheetText = dir === 'next' ? pages[index] ?? '' : pages[index - 1] ?? '';
+  // 页码：给 PageLayer 找对应的预渲染位图
+  const sheetIdx = dir === 'next' ? index : index - 1;
+  const underIdx = dir === 'next' ? index + 1 : index;
   const underText = dir === 'next' ? pages[index + 1] ?? '' : pages[index] ?? '';
   const slideUnder = dir === 'next' ? pages[index + 1] ?? '' : pages[index - 1] ?? '';
 
@@ -453,14 +479,14 @@ export function PageCurlView(props: Props) {
         >
           {index > 0 && pages[index - 1] ? (
             <View style={[styles.layer, { zIndex: 0, opacity: 0 }]} pointerEvents="none">
-              {pageBody(pages[index - 1])}
+              {pageBody(pages[index - 1], index - 1)}
             </View>
           ) : null}
           <View style={[styles.layer, { zIndex: 1 }]} pointerEvents="none">
-            {pageBody(slideUnder)}
+            {pageBody(slideUnder, dir === 'next' ? index + 1 : index - 1)}
           </View>
           <Animated.View style={[styles.layer, { zIndex: 2 }, slideStyle]} pointerEvents="none">
-            {pageBody(pages[index] ?? '')}
+            {pageBody(pages[index] ?? '', index)}
           </Animated.View>
         </View>
       </GestureDetector>
@@ -481,13 +507,13 @@ export function PageCurlView(props: Props) {
        */}
       {index > 0 && pages[index - 1] ? (
         <View style={[styles.layer, { zIndex: 0, opacity: 0 }]} pointerEvents="none">
-          {pageBody(pages[index - 1])}
+          {pageBody(pages[index - 1], index - 1)}
         </View>
       ) : null}
 
       {/* 底层：还没翻到的那一页 */}
       <View style={[styles.layer, { zIndex: 1 }]} pointerEvents="none">
-        {pageBody(underText)}
+        {pageBody(underText, underIdx)}
       </View>
 
       {/* 平铺段：纸面 [0, c]。
@@ -497,7 +523,7 @@ export function PageCurlView(props: Props) {
         style={[styles.flat, { zIndex: 2, width: areaW, height: areaH }]}
         pointerEvents="none"
       >
-        {pageBody(sheetText)}
+        {pageBody(sheetText, sheetIdx)}
         {/* 遮罩必须放在平铺段**内部**：放外面会连下面那页一起盖掉，
             右上角就变成一片空白了。这里只盖住本节自己的内容。 */}
         <Animated.View
@@ -568,7 +594,7 @@ export function PageCurlView(props: Props) {
                 }}
                 pointerEvents="none"
               >
-                {pageBody(sheetText)}
+                {pageBody(sheetText, sheetIdx)}
               </View>
             </View>
             {/* 圆柱面上的明暗：原版 rgb *= cos θ */}

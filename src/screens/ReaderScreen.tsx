@@ -22,6 +22,7 @@ import {
 import { paginate } from '../utils/paginate';
 import { trimPageEdges, typeset } from '../utils/typeset';
 import { hasVisibleText } from '../utils/text';
+import { captureRef } from 'react-native-view-shot';
 import {
   clearBookChapters,
   countCached,
@@ -620,6 +621,83 @@ export function ReaderScreen() {
     return rawPages.length ? [' '] : [];
   }, [rawPages]);
 
+  /*
+   * ===== 页面位图化（对齐爱阅书香的思路）=====
+   * 正文用「活的 Text」渲染时，每翻一页都要重新做一次文字排版，
+   * 那几十毫秒里屏幕是空的。爱阅书香不会空，是因为它把每页当成一张图，
+   * 翻页期间只对图做几何变换，根本不碰文字。
+   *
+   * 这里做同样的事：后台用隐藏容器把相邻几页渲染出来 → 截成图片 →
+   * 翻页组件优先贴图。图还没截好时自动退回实时文字（首屏那一下）。
+   */
+  const [pageImages, setPageImages] = useState<Record<number, string>>({});
+  const imagesRef = useRef<Record<number, string>>({});
+  imagesRef.current = pageImages;
+  const shotHostRef = useRef<any>(null);
+  const shotQueueRef = useRef<{ idx: number; text: string }[]>([]);
+  const [shotTarget, setShotTarget] = useState<{ idx: number; text: string } | null>(null);
+
+  // 换章 / 改字号行距 / 改每页行数 / 尺寸变化 → 旧位图全部作废，必须清掉，
+  // 否则会贴出上一个排版下的内容（页码已经对不上了）
+  useEffect(() => {
+    setPageImages({});
+  }, [
+    index,
+    settings.fontSize,
+    settings.lineHeight,
+    settings.linesPerPage,
+    settings.paraIndent,
+    area.w,
+    area.h,
+    content.length,
+  ]);
+
+  // 入队：优先下一页（翻页最需要），再当前页、上一页
+  useEffect(() => {
+    if (!isPaged || !pages.length || !area.w || !area.h) return;
+    const want: { idx: number; text: string }[] = [];
+    for (const i of [index + 1, index, index - 1]) {
+      if (i < 0 || i >= pages.length) continue;
+      const t = pages[i];
+      if (!hasVisibleText(t) || imagesRef.current[i]) continue;
+      if (want.some((x) => x.idx === i)) continue;
+      want.push({ idx: i, text: t });
+    }
+    shotQueueRef.current = want;
+    setShotTarget(want[0] ?? null);
+  }, [isPaged, index, pages, area.w, area.h]);
+
+  // 出一张图，然后接着下一张
+  useEffect(() => {
+    if (!shotTarget || !shotHostRef.current) return;
+    let cancel = false;
+    const timer = setTimeout(async () => {
+      let uri: string | null = null;
+      try {
+        uri = await captureRef(shotHostRef, {
+          format: 'jpg',
+          quality: 0.85,
+          width: area.w,
+          height: area.h,
+          result: 'tmpfile',
+        });
+      } catch {
+        uri = null;
+      }
+      if (cancel) return;
+      if (uri) {
+        setPageImages((prev) => ({ ...prev, [shotTarget.idx]: uri as string }));
+      }
+      shotQueueRef.current.shift();
+      setShotTarget(shotQueueRef.current[0] ?? null);
+    }, 80);
+    return () => {
+      cancel = true;
+      clearTimeout(timer);
+    };
+  }, [shotTarget, area.w, area.h]);
+
+
   // 章节内容/排版变化后，按 pending 定位当前页（翻章时跳到首/末页），并持久化进度
   useEffect(() => {
     if (!pages.length) return;
@@ -1018,6 +1096,47 @@ export function ReaderScreen() {
           >
             {area.w > 0 ? (
               <>
+              {/*
+               * 隐藏的「截图宿主」：把待截图的页按正式排版渲染一遍（透明不可见），
+               * 然后由 captureRef 拍成图片。位置和尺寸必须和正文页面完全一致，
+               * 否则截出来的图和实际显示对不上。
+               */}
+              <View
+                ref={shotHostRef}
+                collapsable={false}
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  width: area.w,
+                  height: area.h,
+                  opacity: 0,
+                }}
+              >
+                {shotTarget ? (
+                  <View
+                    style={{
+                      width: area.w,
+                      height: area.h,
+                      backgroundColor: theme.bg,
+                      paddingTop: PAGE_PAD_TOP + metaHeaderH,
+                      paddingBottom: PAGE_PAD_BOTTOM + metaFooterH,
+                      paddingHorizontal: PAGE_PAD_H,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: theme.text,
+                        fontSize: settings.fontSize,
+                        lineHeight: settings.fontSize * settings.lineHeight,
+                      }}
+                    >
+                      {shotTarget.text}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
               <PageCurlView
                 pages={pages}
                 /* 排版测量回来后页数可能变少（每页能装的行数和估算不同），
@@ -1037,6 +1156,7 @@ export function ReaderScreen() {
                 areaH={area.h}
                 headerH={metaHeaderH}
                 footerH={metaFooterH}
+                images={pageImages}
                 onTapLeft={handlePrevPage}
                 onTapRight={handleNextPage}
                 onTapCenter={toggleBars}
@@ -1266,19 +1386,6 @@ export function ReaderScreen() {
               </Text>
             </TouchableOpacity>
             <View style={styles.row}>
-              <TouchableOpacity
-                style={styles.presetBtn}
-                onPress={() =>
-                  updateSettings({
-                    fontSize: 18,
-                    lineHeight: 1.6,
-                    paraIndent: true,
-                    paraGap: 0,
-                  })
-                }
-              >
-                <Text style={styles.presetText}>推荐排版（18 号 · 1.6 行距）</Text>
-              </TouchableOpacity>
               <Text style={[styles.menuLabel, { marginTop: 10 }]}>字号</Text>
               <View style={styles.stepper}>
                 <TouchableOpacity
@@ -1405,6 +1512,23 @@ export function ReaderScreen() {
                 ))}
               </View>
             </View>
+            {/* 临时诊断：把原始字符转义后打出来，用来看段落之间到底有没有 \n\n */}
+            <Text
+              selectable
+              style={{ color: '#777', fontSize: 9, lineHeight: 12, marginTop: 14 }}
+            >
+              {`[原文] ${JSON.stringify((content || '').slice(0, 80))}`}
+              {'\n'}
+              {`[排版] ${JSON.stringify(displayText.slice(0, 80))}`}
+              {'\n'}
+              {`[本页] ${JSON.stringify(
+                (pages[Math.min(pageIndex, Math.max(0, pages.length - 1))] || '').slice(
+                  0,
+                  80
+                )
+              )}`}
+            </Text>
+
             <View style={styles.row}>
               <Text style={styles.menuLabel}>翻页模式</Text>
               <TouchableOpacity
