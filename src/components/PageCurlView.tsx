@@ -117,7 +117,15 @@ export function PageCurlView(props: Props) {
   useEffect(() => {
     animatingSV.value = false;
     dragX.value = 0;
-  }, [index, areaW, mode, animatingSV, dragX]);
+    /*
+     * 必须把方向重置回 next。
+     * 静止状态（dragX = 0）下，如果 dir 还是 'prev'，布局是「纸面宽度 0、纸背铺满」——
+     * 纸背是纯色块（barBg），结果整屏只有背景色，看起来就是「内容变空白」。
+     * 用户「往前滑一页就空」正是这个原因。
+     */
+    dirSV.value = 0;
+    setDir('next');
+  }, [index, areaW, mode, animatingSV, dragX, dirSV]);
 
   // 每片的静态几何：只跟 R 有关，翻页过程中完全不变
   const curl = useMemo<CurlSlice[]>(() => {
@@ -228,6 +236,10 @@ export function PageCurlView(props: Props) {
     // 全部 'worklet'：手势判定 + 动画都在 UI 线程跑，JS 线程再忙也不掉帧
     const flip = (d: 'next' | 'prev') => {
       'worklet';
+      // 点击翻页不经过 onUpdate，这里必须自己把方向切过去，
+      // 否则渲染的还是错误方向的页面组合。
+      dirSV.value = d === 'next' ? 0 : 1;
+      runOnJS(setDir)(d);
       animatingSV.value = true;
       dragX.value = withTiming(d === 'next' ? -AW : AW, { duration: 280 }, (fin) => {
         if (fin) {
@@ -241,7 +253,10 @@ export function PageCurlView(props: Props) {
 
     const springBack = () => {
       'worklet';
-      dragX.value = withSpring(0, { damping: 24, stiffness: 320, mass: 0.6 });
+      dragX.value = withSpring(0, { damping: 24, stiffness: 320, mass: 0.6 }, (fin) => {
+        // 回弹到位、回到静止，方向也要归位，否则又变成纯色空屏
+        if (fin) runOnJS(setDir)('next');
+      });
     };
 
     // 轻点必须单独用 Tap 手势：Pan 需要手指移动才会激活，

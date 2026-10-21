@@ -38,6 +38,7 @@ import {
   PAGE_FOOTER_H,
   PAGE_HEADER_H,
   PAGE_PAD_BOTTOM,
+  PAGE_FIXED_LINES,
   PAGE_PAD_H,
   PAGE_PAD_TOP,
   pageTextHeight,
@@ -585,12 +586,21 @@ export function ReaderScreen() {
       }
       gaps.sort((a, b) => a - b);
       const realLineH = gaps.length ? gaps[Math.floor(gaps.length / 2)] : lineH;
-      const maxLines = Math.max(1, Math.floor(H / realLineH));
+      // 固定行数（用户要求 18 行）；只有字号大到 18 行真放不下时才让位给可用高度
+      const fitLines = Math.max(1, Math.floor(H / realLineH));
+      const wantLines = settings.linesPerPage ?? PAGE_FIXED_LINES;
+      const maxLines = Math.max(1, Math.min(wantLines, fitLines));
       const out: string[] = [];
       let cur: string[] = [];
       let baseY = measuredLines[0].y;
       for (const ln of measuredLines) {
-        const bottom = ln.y + (ln.h > 0 ? ln.h : lineH) - baseY;
+        /*
+         * 关键：这里用 realLineH（实测行距），而不是 ln.h。
+         * onTextLayout 报的 height 比实际渲染小一点，拿它算 bottom 会低估，
+         * 于是"以为放得下"却溢出，最后一行就被容器裁掉半截。
+         * 实测行距 + 行数上限用同一个值，两边严格一致，才排得准。
+         */
+        const bottom = ln.y + realLineH - baseY;
         if (cur.length && (bottom > H + 0.5 || cur.length >= maxLines)) {
           out.push(trimPageEdges(cur.join('\n')));
           cur = [];
@@ -609,11 +619,21 @@ export function ReaderScreen() {
       if (cleaned.length) return cleaned;
     }
 
+    // 兜底路径只知道理论行高（实测值还没回来），保守少排半行，宁少勿裁
     const fallback = paginate(displayText, {
       fontSize: settings.fontSize,
       lineHeight: settings.lineHeight,
       width: pageTextWidth(area.w),
-      height: H,
+      // 兜底路径同样按固定行数给高度
+      height: Math.max(
+        1,
+        Math.min(
+          H,
+          (settings.linesPerPage ?? PAGE_FIXED_LINES) *
+            settings.fontSize *
+            settings.lineHeight
+        )
+      ),
       charsPerLine,
     });
     // 最后一道保险：无论如何不能让 pages 是空数组，否则整页全白
@@ -629,6 +649,7 @@ export function ReaderScreen() {
     charsPerLine,
     measuredLines,
     displayText,
+    settings.linesPerPage,
     isPaged,
   ]);
 
@@ -1067,7 +1088,12 @@ export function ReaderScreen() {
               <View
                 style={[
                   styles.pageHeader,
-                  { backgroundColor: theme.bg, top: insets.top },
+                  {
+                    backgroundColor: settings.debugLayout
+                      ? 'rgba(0,160,255,0.35)'
+                      : theme.bg,
+                    top: insets.top,
+                  },
                 ]}
                 pointerEvents="none"
               >
@@ -1088,12 +1114,23 @@ export function ReaderScreen() {
               <View
                 style={[
                   styles.pageFooter,
-                  { backgroundColor: theme.bg, bottom: insets.bottom },
+                  {
+                    backgroundColor: settings.debugLayout
+                      ? 'rgba(255,60,60,0.35)'
+                      : theme.bg,
+                    bottom: Math.max(4, insets.bottom - 14),
+                  },
                 ]}
                 pointerEvents="none"
               >
                 <Text style={[styles.pageMeta, { color: theme.sub }]}>
-                  {pages.length ? `${pageIndex + 1}/${pages.length}` : ''}
+                  {pages.length
+                    ? `${pageIndex + 1}/${pages.length} · ${
+                        ((pages[Math.min(pageIndex, pages.length - 1)] || '')
+                          .split('\n')
+                          .filter((l) => l.length > 0).length
+                      )}行`
+                    : ''}
                   {chapters.length
                     ? ` · 全书 ${(
                         ((index + (pages.length ? (pageIndex + 1) / pages.length : 0)) /
@@ -1434,6 +1471,60 @@ export function ReaderScreen() {
                   <Text style={styles.stepText}>＋</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+            <View style={styles.row}>
+              <Text style={styles.menuLabel}>每页行数</Text>
+              <View style={styles.stepper}>
+                <TouchableOpacity
+                  style={styles.step}
+                  onPress={() =>
+                    updateSettings({
+                      linesPerPage: Math.max(10, (settings.linesPerPage ?? 18) - 1),
+                    })
+                  }
+                >
+                  <Text style={styles.stepText}>－</Text>
+                </TouchableOpacity>
+                <Text style={[styles.menuVal, { color: APP.text }]}>
+                  {settings.linesPerPage ?? 18}
+                </Text>
+                <TouchableOpacity
+                  style={styles.step}
+                  onPress={() =>
+                    updateSettings({
+                      linesPerPage: Math.min(30, (settings.linesPerPage ?? 18) + 1),
+                    })
+                  }
+                >
+                  <Text style={styles.stepText}>＋</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={styles.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.menuLabel}>显示排版边界</Text>
+                <Text style={styles.switchSub} numberOfLines={1}>
+                  页眉染蓝、页脚染红，用来查正文有没有被压住
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.switchPill,
+                  settings.debugLayout && styles.switchPillOn,
+                ]}
+                onPress={() =>
+                  updateSettings({ debugLayout: !settings.debugLayout })
+                }
+              >
+                <Text
+                  style={[
+                    styles.switchPillText,
+                    settings.debugLayout && styles.switchPillTextOn,
+                  ]}
+                >
+                  {settings.debugLayout ? '开' : '关'}
+                </Text>
+              </TouchableOpacity>
             </View>
             <View style={styles.row}>
               <Text style={styles.menuLabel}>段首缩进</Text>
