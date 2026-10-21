@@ -111,9 +111,13 @@ const PageLayer = React.memo(function PageLayer({
           paddingBottom: padBottom,
         },
       ]}
-      // 仿真翻页一次要画十几层同一个页面，光栅化后整页是一张位图，
-      // 翻页只是搬/缩放图片，帧率会好很多。
-      shouldRasterizeIOS
+      /*
+       * 去掉了 shouldRasterizeIOS：
+       * 光栅化要 GPU 先把整页合成成一张纹理，内容一变（翻页/换章/换字号）
+       * 就得重新生成 —— 那一瞬间屏幕上是空的。之前翻页"空白一下"、
+       * 甚至一直白，很可能就是它和节点重建叠加的结果。
+       * 现在靠 PageLayer 的 memo 保证节点复用，不需要再光栅化了。
+       */
       renderToHardwareTextureAndroid
     >
       <Text style={[styles.pageText, textStyle]}>{text || ' '}</Text>
@@ -447,6 +451,11 @@ export function PageCurlView(props: Props) {
         <View
           style={[styles.container, { width: areaW, height: areaH, backgroundColor: theme.bg }]}
         >
+          {index > 0 && pages[index - 1] ? (
+            <View style={[styles.layer, { zIndex: 0, opacity: 0 }]} pointerEvents="none">
+              {pageBody(pages[index - 1])}
+            </View>
+          ) : null}
           <View style={[styles.layer, { zIndex: 1 }]} pointerEvents="none">
             {pageBody(slideUnder)}
           </View>
@@ -463,6 +472,19 @@ export function PageCurlView(props: Props) {
       <View
         style={[styles.container, { width: areaW, height: areaH, backgroundColor: theme.bg }]}
       >
+      {/*
+       * 预渲染「上一页」（完全透明，看不见但参与布局）。
+       * 为什么需要它：静止时只渲染了当前页和下一页，往回翻的那一页是**第一次**上屏，
+       * 要现场做文字排版 —— 那几十毫秒里就是用户看到的「往回翻变空白」。
+       * 翻下一页不空，正是因为下一页一直作为底层渲染着、早就排好了。
+       * 这里把上一页也提前挂上去，配合 PageLayer 的 memo，翻回去时直接复用。
+       */}
+      {index > 0 && pages[index - 1] ? (
+        <View style={[styles.layer, { zIndex: 0, opacity: 0 }]} pointerEvents="none">
+          {pageBody(pages[index - 1])}
+        </View>
+      ) : null}
+
       {/* 底层：还没翻到的那一页 */}
       <View style={[styles.layer, { zIndex: 1 }]} pointerEvents="none">
         {pageBody(underText)}
