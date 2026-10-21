@@ -775,8 +775,12 @@ export function ReaderScreen() {
             edges={['left', 'right', 'top', 'bottom']}
             onLayout={(e) => {
               const { width, height } = e.nativeEvent.layout;
+              // onLayout 给的是**含 padding** 的总高，而这个 SafeAreaView 上下都吃着
+              // 安全区（灵动岛 59 + home 条 34）。不减掉就等于多算 93pt，
+              // 分页会多切两三行，最后那几行就掉到页脚下面、溢出屏幕。
+              const usable = height - insets.top - insets.bottom;
               setArea((a) =>
-                a.w === width && a.h === height ? a : { w: width, h: height }
+                a.w === width && a.h === usable ? a : { w: width, h: usable }
               );
             }}
           >
