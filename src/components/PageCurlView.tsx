@@ -85,10 +85,25 @@ interface Props {
   onTapLeft: () => void; // 章边界：翻到上一章
   onTapRight: () => void; // 章边界：翻到下一章
   onTapCenter: () => void; // 打开/收起工具栏
+  /** 页眉占位高度，0 = 不显示页眉（正文直接排到边上） */
+  headerH?: number;
+  /** 页脚占位高度，0 = 不显示页脚 */
+  footerH?: number;
 }
 
 export function PageCurlView(props: Props) {
-  const { pages, index, mode, theme, fontSize, lineHeight, areaW, areaH } = props;
+  const {
+    pages,
+    index,
+    mode,
+    theme,
+    fontSize,
+    lineHeight,
+    areaW,
+    areaH,
+    headerH = PAGE_HEADER_H,
+    footerH = PAGE_FOOTER_H,
+  } = props;
 
   const AW = Math.max(areaW, 1);
   const AH = Math.max(areaH, 1);
@@ -355,7 +370,16 @@ export function PageCurlView(props: Props) {
   // 两页文字就会叠印在一起 —— 看上去像「第二页的字印到了上一页」。
   const pageBody = (text: string) => (
     <View
-      style={[styles.page, { width: areaW, height: areaH, backgroundColor: theme.bg }]}
+      style={[
+        styles.page,
+        {
+          width: areaW,
+          height: areaH,
+          backgroundColor: theme.bg,
+          paddingTop: PAGE_PAD_TOP + headerH,
+          paddingBottom: PAGE_PAD_BOTTOM + footerH,
+        },
+      ]}
       // 仿真翻页一次要画十几层同一个页面（底页/平铺段/纸背/每一片卷曲），
       // 每层都是整页文字的原生排版，JS 线程扛不住就会掉帧。
       // 光栅化之后整页变成一张位图，翻页只是搬/缩放图片，帧率立刻上来。
@@ -500,9 +524,7 @@ const styles = StyleSheet.create({
     // 必须和 pageTextHeight 用同一套常量，否则分页算出来的行数和实际渲染对不上，
     // 就会出现「最后一行被裁半个字」和「底部空一块」
     paddingHorizontal: PAGE_PAD_H,
-    // 顶部要让出页眉那一行（章节名 / 书名），正文从页眉下面开始
-    paddingTop: PAGE_PAD_TOP + PAGE_HEADER_H,
-    paddingBottom: PAGE_PAD_BOTTOM + PAGE_FOOTER_H,
+    // 上下内边距在渲染时按「是否显示页眉页脚」动态给（见 pageBody）
   },
   pageText: { textAlign: 'left' },
   flat: { position: 'absolute', left: 0, top: 0, overflow: 'hidden' },

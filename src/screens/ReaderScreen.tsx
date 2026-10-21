@@ -368,6 +368,10 @@ export function ReaderScreen() {
   // 页眉页脚是绝对定位的，绝对定位不认父容器的安全区 padding，
   // 必须自己把安全区高度加上，否则会被状态栏/灵动岛和 home indicator 压住。
   const insets = useSafeAreaInsets();
+  // 页眉页脚开关：关掉时正文一路排到边上，不留任何占位
+  const showMeta = settings.showMeta === true;
+  const metaHeaderH = showMeta ? PAGE_HEADER_H : 0;
+  const metaFooterH = showMeta ? PAGE_FOOTER_H : 0;
 
   // zustand 的持久化是异步的（AsyncStorage）。首帧 shelf 还是空数组，
   // 这时候去找"有没有缓存目录"必然找不到 → 白白重拉一次。
@@ -560,7 +564,7 @@ export function ReaderScreen() {
   // 测量还没回来时，先用旧的字数估算顶一下，避免闪一下空白。
   const rawPages = useMemo(() => {
     if (!isPaged || !area.w || !area.h) return [];
-    const H = pageTextHeight(area.h);
+    const H = pageTextHeight(area.h, metaHeaderH, metaFooterH);
 
     // 测量结果不可靠（只有一行，或所有行 y 都是 0）时别硬切，回落估算
     const measuredOk =
@@ -650,6 +654,8 @@ export function ReaderScreen() {
     measuredLines,
     displayText,
     settings.linesPerPage,
+    metaHeaderH,
+    metaFooterH,
     isPaged,
   ]);
 
@@ -1080,10 +1086,14 @@ export function ReaderScreen() {
                 lineHeight={settings.lineHeight}
                 areaW={area.w}
                 areaH={area.h}
+                headerH={metaHeaderH}
+                footerH={metaFooterH}
                 onTapLeft={handlePrevPage}
                 onTapRight={handleNextPage}
                 onTapCenter={toggleBars}
               />
+              {showMeta && (
+              <>
               {/* 页眉：左章节名、右书名。固定在每页顶部，不随翻页移动 */}
               <View
                 style={[
@@ -1145,6 +1155,8 @@ export function ReaderScreen() {
                   {battery == null ? '' : `${Math.round(battery * 100)}%`}
                 </Text>
               </View>
+              </>
+              )}
               </>
             ) : (
               <View style={styles.center}>
@@ -1471,6 +1483,27 @@ export function ReaderScreen() {
                   <Text style={styles.stepText}>＋</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+            <View style={styles.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.menuLabel}>页眉页脚</Text>
+                <Text style={styles.switchSub} numberOfLines={1}>
+                  {showMeta ? '显示章节名 / 进度 / 电量' : '已隐藏，正文排满整屏'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.switchPill, showMeta && styles.switchPillOn]}
+                onPress={() => updateSettings({ showMeta: !showMeta })}
+              >
+                <Text
+                  style={[
+                    styles.switchPillText,
+                    showMeta && styles.switchPillTextOn,
+                  ]}
+                >
+                  {showMeta ? '显示' : '隐藏'}
+                </Text>
+              </TouchableOpacity>
             </View>
             <View style={styles.row}>
               <Text style={styles.menuLabel}>每页行数</Text>

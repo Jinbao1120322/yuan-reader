@@ -25,7 +25,7 @@ export const PAGE_PAD_TOP = 6; // 正文上留白（压到很小，让正文尽�
  * 与其精算到极限，不如让底部松半行 —— 视觉上完全看不出来，
  * 但保证每一行的下半截都完整。
  */
-export const PAGE_PAD_BOTTOM = 34;
+export const PAGE_PAD_BOTTOM = 6;
 
 /*
  * 每页固定行数（用户 2026-10-21 明确要求）。
@@ -41,10 +41,14 @@ export function pageTextWidth(areaW: number): number {
   return Math.max(1, areaW - PAGE_PAD_H * 2);
 }
 
-/** 可排印高度：容器高减去页眉、页脚和上下留白 */
-export function pageTextHeight(areaH: number): number {
-  return Math.max(
-    1,
-    areaH - PAGE_HEADER_H - PAGE_FOOTER_H - PAGE_PAD_TOP - PAGE_PAD_BOTTOM
-  );
+/**
+ * 可排印高度：容器高减去页眉、页脚和上下留白。
+ * 页眉页脚可以关掉（showMeta = false），关掉时传 0 —— 正文就能一直排到边上。
+ */
+export function pageTextHeight(
+  areaH: number,
+  headerH: number = PAGE_HEADER_H,
+  footerH: number = PAGE_FOOTER_H
+): number {
+  return Math.max(1, areaH - headerH - footerH - PAGE_PAD_TOP - PAGE_PAD_BOTTOM);
 }
