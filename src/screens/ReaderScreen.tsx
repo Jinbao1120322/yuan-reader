@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { View, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, FlatList, Alert, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { useStore } from '../store/useStore';
+import { bookKey, useStore } from '../store/useStore';
 import { getBookInfo, getContent, getToc } from '../engine/SourceEngine';
 import { BookChapter } from '../engine/types';
 import { TopBar } from '../components/TopBar';
@@ -202,7 +202,31 @@ export function ReaderScreen() {
   // 实测「一行能放几个字」。字体不同字宽差很多，靠估算必然失准
   // （换自定义字体后估 17 字、实际只放得下 16 字，每行最后一个字被挤到下一行单独成行）。
   const [charsPerLine, setCharsPerLine] = useState(0);
+  // 手动刷新目录时 +1，用来强制重新走一次加载
+  const [tocTick, setTocTick] = useState(0);
   const appFont = useAppFont();
+
+  // zustand 的持久化是异步的（AsyncStorage）。首帧 shelf 还是空数组，
+  // 这时候去找"有没有缓存目录"必然找不到 → 白白重拉一次。
+  const [hydrated, setHydrated] = useState(() => {
+    const p: any = (useStore as any).persist;
+    return !p || typeof p.hasHydrated !== 'function' ? true : p.hasHydrated();
+  });
+  useEffect(() => {
+    const p: any = (useStore as any).persist;
+    if (!p || typeof p.hasHydrated !== 'function') {
+      setHydrated(true);
+      return;
+    }
+    if (p.hasHydrated()) {
+      setHydrated(true);
+      return;
+    }
+    const un = p.onFinishHydration?.(() => setHydrated(true));
+    return () => {
+      if (typeof un === 'function') un();
+    };
+  }, []);
   const pendingPageIndex = useRef<number | null>(null); // -1 表示定位到本章末页
   // 滚动模式：保存的阅读进度是 0~1000 的百分比，首次进入时恢复到该位置
   const scrollRestoreFrac = useRef<number | null>(
@@ -211,8 +235,9 @@ export function ReaderScreen() {
   const [scrollContentH, setScrollContentH] = useState(0);
   const [scrollViewH, setScrollViewH] = useState(0);
 
+  const currentKey = bookKey(bookUrl, sourceId);
   const shelfBook = shelf.find(
-    (s) => s.bookUrl === bookUrl && s.sourceId === sourceId
+    (s) => bookKey(s.bookUrl, s.sourceId) === currentKey
   );
   const onShelf = !!shelfBook;
 
@@ -247,6 +272,8 @@ export function ReaderScreen() {
 
   // 加载目录
   useEffect(() => {
+    // store 还没读完就别急着发请求，否则会当成"没有缓存"重拉一遍
+    if (!hydrated) return;
     let cancel = false;
     const load = async () => {
       const applyList = (ch: BookChapter[]) => {
@@ -276,9 +303,14 @@ export function ReaderScreen() {
         applyList(ch);
         return;
       }
+      // 书架里的书：目录建好就存着，24 小时内直接拿来用，不再跑网络
       const cached = shelfBook?.cachedChapters;
-      if (cached && cached.length) {
-        applyList(cached);
+      const fresh =
+        cached &&
+        cached.length > 0 &&
+        (!shelfBook?.cachedAt || Date.now() - shelfBook.cachedAt < 24 * 3600 * 1000);
+      if (fresh) {
+        applyList(cached as BookChapter[]);
         return;
       }
       const src = sources.find((s) => s.bookSourceUrl === sourceId);
@@ -294,7 +326,7 @@ export function ReaderScreen() {
       cancel = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookUrl, sourceId]);
+  }, [bookUrl, sourceId, hydrated, tocTick]);
 
   // 加载正文
   useEffect(() => {
@@ -387,6 +419,20 @@ export function ReaderScreen() {
   };
   const goNext = () => {
     if (index < chapters.length - 1) setIndex(index + 1);
+  };
+
+  // 手动刷新目录：把缓存时间戳清掉，再踢一次 effect 走网络
+  const refreshToc = () => {
+    setMenuOpen(false);
+    if (!shelfBook) return;
+    useStore.setState((st) => ({
+      shelf: st.shelf.map((x) =>
+        bookKey(x.bookUrl, x.sourceId) === currentKey
+          ? { ...x, cachedAt: 0 }
+          : x
+      ),
+    }));
+    setTocTick((t) => t + 1);
   };
 
   // 换源：记下当前章节名 → 切书源 → 新目录到了自动跳到同一章
@@ -710,6 +756,18 @@ export function ReaderScreen() {
                 </Text>
               </View>
               <Text style={styles.switchGo}>切换</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.switchRow} onPress={refreshToc}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.menuLabel}>刷新目录</Text>
+                <Text style={styles.switchSub} numberOfLines={1}>
+                  {shelfBook
+                    ? '书架里的书会缓存目录，书更新了点这里拉最新'
+                    : '加入书架后才会缓存目录'}
+                </Text>
+              </View>
+              <Text style={styles.switchGo}>刷新</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.switchRow} onPress={toggleShelf}>

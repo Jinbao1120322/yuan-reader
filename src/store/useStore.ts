@@ -3,6 +3,20 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BookSource, BookInfo, BookChapter } from '../engine/types';
 
+/**
+ * 同一本书的判定键。
+ * bookUrl 经常只差一点点（尾斜杠、#后面的标记、http 与 https），
+ * 用 === 直接比会"明明在书架里却找不到"，于是每次都重新拉目录。
+ */
+export function bookKey(url: string, sourceId: string): string {
+  const u = String(url || '')
+    .split('#')[0]
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/^http:\/\//i, 'https://');
+  return `${u}|${sourceId}`;
+}
+
 export interface ShelfBook {
   bookUrl: string;
   sourceId: string;
@@ -16,6 +30,7 @@ export interface ShelfBook {
   lastChapterIndex: number;
   lastReadPos: number; // 阅读进度（字符偏移）
   cachedChapters?: BookChapter[]; // 缓存目录
+  cachedAt?: number; // 缓存时间，用来判断要不要刷新
 }
 
 export type ThemeKey = 'day' | 'night' | 'green' | 'paper';
@@ -211,34 +226,39 @@ export const useStore = create<State>()(
         }),
 
       removeFromShelf: (bookUrl, sourceId) =>
-        set((st) => ({
-          shelf: st.shelf.filter(
-            (x) => !(x.bookUrl === bookUrl && x.sourceId === sourceId)
-          ),
-        })),
+        set((st) => {
+          const k = bookKey(bookUrl, sourceId);
+          return { shelf: st.shelf.filter((x) => bookKey(x.bookUrl, x.sourceId) !== k) };
+        }),
 
       updateProgress: (bookUrl, sourceId, chapterIndex, pos) =>
-        set((st) => ({
-          shelf: st.shelf.map((x) =>
-            x.bookUrl === bookUrl && x.sourceId === sourceId
-              ? {
-                  ...x,
-                  lastChapterIndex: chapterIndex,
-                  lastReadPos: pos,
-                  lastReadAt: Date.now(),
-                }
-              : x
-          ),
-        })),
+        set((st) => {
+          const k = bookKey(bookUrl, sourceId);
+          return {
+            shelf: st.shelf.map((x) =>
+              bookKey(x.bookUrl, x.sourceId) === k
+                ? {
+                    ...x,
+                    lastChapterIndex: chapterIndex,
+                    lastReadPos: pos,
+                    lastReadAt: Date.now(),
+                  }
+                : x
+            ),
+          };
+        }),
 
       cacheChapters: (bookUrl, sourceId, ch) =>
-        set((st) => ({
-          shelf: st.shelf.map((x) =>
-            x.bookUrl === bookUrl && x.sourceId === sourceId
-              ? { ...x, cachedChapters: ch }
-              : x
-          ),
-        })),
+        set((st) => {
+          const k = bookKey(bookUrl, sourceId);
+          return {
+            shelf: st.shelf.map((x) =>
+              bookKey(x.bookUrl, x.sourceId) === k
+                ? { ...x, cachedChapters: ch, cachedAt: Date.now() }
+                : x
+            ),
+          };
+        }),
 
       updateSettings: (patch) =>
         set((st) => ({ settings: { ...st.settings, ...patch } })),
