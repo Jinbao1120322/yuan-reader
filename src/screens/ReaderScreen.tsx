@@ -608,26 +608,35 @@ export function ReaderScreen() {
     const src = sources.find((s) => s.bookSourceUrl === sourceId);
     if (!src) return;
     let cancel = false;
-    (async () => {
-      for (let i = 1; i <= 5; i++) {
-        const t = index + i;
-        if (cancel) return;
-        if (t >= chapters.length) return;
-        if (prefetchingRef.current.has(t)) continue;
-        if (await hasChapter(currentKey, t)) continue;
-        prefetchingRef.current.add(t);
-        try {
-          const r = await getContent(src, chapters[t].url);
-          if (r.content) await saveChapter(currentKey, t, r.content);
-        } catch {
-          /* 预取失败无所谓，翻到那儿再拉 */
-        } finally {
-          prefetchingRef.current.delete(t);
+    // 关键：预取要等当前页彻底稳定再开始。
+    // 解析一章 HTML（cheerio）是纯 JS 计算，翻页时同时跑 5 个会把 JS 线程占满，
+    // 动画就会一顿一顿的。延迟 1.5 秒，快速连翻时根本不会启动预取。
+    const timer = setTimeout(() => {
+      if (cancel) return;
+      (async () => {
+        for (let i = 1; i <= 5; i++) {
+          const t = index + i;
+          if (cancel) return;
+          if (t >= chapters.length) return;
+          if (prefetchingRef.current.has(t)) continue;
+          if (await hasChapter(currentKey, t)) continue;
+          prefetchingRef.current.add(t);
+          try {
+            const r = await getContent(src, chapters[t].url);
+            if (r.content) await saveChapter(currentKey, t, r.content);
+          } catch {
+            /* 预取失败无所谓，翻到那儿再拉 */
+          } finally {
+            prefetchingRef.current.delete(t);
+          }
+          // 每章之间让出一帧，别把 JS 线程连着占死
+          await new Promise((res) => setTimeout(res, 60));
         }
-      }
-    })();
+      })();
+    }, 1500);
     return () => {
       cancel = true;
+      clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, chapters.length, loading, sourceId, currentKey]);
@@ -749,9 +758,36 @@ export function ReaderScreen() {
     });
   };
 
-  const savePageProgress = (pi: number) => {
-    updateProgress(bookUrl, sourceId, index, pi);
+  // 进度写盘节流。updateProgress 会触发 zustand persist —— 每次都要把
+  // 整个 store（含全部书源规则）序列化写盘，一页一次的话翻得快点就掉帧。
+  // 连续翻页时只写最后一次，卸载时补一次。
+  const saveTimerRef = useRef<any>(null);
+  const pendingRef = useRef<{ i: number; p: number } | null>(null);
+  const flushProgress = () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const p = pendingRef.current;
+    if (p) {
+      pendingRef.current = null;
+      updateProgress(bookUrl, sourceId, p.i, p.p);
+    }
   };
+  const savePageProgress = (pi: number) => {
+    pendingRef.current = { i: index, p: pi };
+    if (saveTimerRef.current) return;
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      flushProgress();
+    }, 350);
+  };
+  useEffect(() => () => flushProgress(), []);
+  useEffect(() => {
+    // 换章时把上一章的进度补写掉，别丢
+    return () => flushProgress();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index]);
 
   // 分页模式下：优先页内翻，到章边界再翻章
   const handlePrev = () => {

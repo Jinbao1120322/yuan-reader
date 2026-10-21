@@ -317,7 +317,14 @@ export function PageCurlView(props: Props) {
   // 底层（还没翻到的那页）永远铺在最下面，如果上面的页面是透明的，
   // 两页文字就会叠印在一起 —— 看上去像「第二页的字印到了上一页」。
   const pageBody = (text: string) => (
-    <View style={[styles.page, { width: areaW, height: areaH, backgroundColor: theme.bg }]}>
+    <View
+      style={[styles.page, { width: areaW, height: areaH, backgroundColor: theme.bg }]}
+      // 仿真翻页一次要画十几层同一个页面（底页/平铺段/纸背/每一片卷曲），
+      // 每层都是整页文字的原生排版，JS 线程扛不住就会掉帧。
+      // 光栅化之后整页变成一张位图，翻页只是搬/缩放图片，帧率立刻上来。
+      shouldRasterizeIOS
+      renderToHardwareTextureAndroid
+    >
       <Text style={[styles.pageText, textStyle]}>{text || ' '}</Text>
     </View>
   );
