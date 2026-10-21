@@ -16,7 +16,14 @@ export const PAGE_PAD_H = 18; // 左右内边距
 export const PAGE_HEADER_H = 22;
 export const PAGE_FOOTER_H = 22;
 export const PAGE_PAD_TOP = 6; // 正文上留白（压到很小，让正文尽量贴近顶栏）
-export const PAGE_PAD_BOTTOM = 6; // 正文下留白（同上，底部尽量贴近工具栏）
+/*
+ * 正文下留白。这里刻意留得比上边多一些（22pt ≈ 半个行高）：
+ * 之前压到 6pt 追求"排满"，但 onTextLayout 报的行高比实际略小，
+ * 几十行累积下来最后一行会顶出可排印区、被容器裁掉半截。
+ * 与其精算到极限，不如让底部松半行 —— 视觉上完全看不出来，
+ * 但保证每一行的下半截都完整。
+ */
+export const PAGE_PAD_BOTTOM = 22;
 
 /** 可排印宽度：容器宽减去左右内边距 */
 export function pageTextWidth(areaW: number): number {

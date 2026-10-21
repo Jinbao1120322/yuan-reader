@@ -9,6 +9,8 @@
  * 用前缀空格是最稳的跨字体做法（全角空格在中文字体里都是整字宽）。
  */
 
+import { isBlankText, stripInvisible } from './text';
+
 export interface TypesetOpts {
   /** 段首缩进两字 */
   indent?: boolean;
@@ -22,10 +24,14 @@ export function typeset(text: string, opts: TypesetOpts = {}): string {
   const indent = opts.indent === false ? '' : INDENT;
   const gap = Math.max(0, Math.min(3, opts.paraGap ?? 1));
 
-  const paras = String(text || '')
+  // 用 isBlankText 而不是 p.length > 0：只有零宽字符的段落要剔掉，
+  // 否则它会变成一个"看不见的段落"，进而撑出一整页空白。
+  // 先把零宽字符清掉：它们不占视觉宽度，但会被排版引擎当成"一个字符"，
+  // 撑出行宽偏差、也可能让一整页"看起来有内容其实是空白"。
+  const paras = stripInvisible(String(text || ''))
     .split(/\r?\n/)
     .map((p) => p.trim())
-    .filter((p) => p.length > 0);
+    .filter((p) => !isBlankText(p));
 
   if (!paras.length) return '';
 

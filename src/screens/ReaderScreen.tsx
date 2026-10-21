@@ -22,6 +22,7 @@ import {
 } from '../utils/localBook';
 import { paginate } from '../utils/paginate';
 import { trimPageEdges, typeset } from '../utils/typeset';
+import { hasVisibleText } from '../utils/text';
 import {
   clearBookChapters,
   countCached,
@@ -556,7 +557,7 @@ export function ReaderScreen() {
   // 分页（仅非滚动模式）
   // 优先用真实排版量出来的行切页：每页正好填满能放下的行，底部不会留白。
   // 测量还没回来时，先用旧的字数估算顶一下，避免闪一下空白。
-  const pages = useMemo(() => {
+  const rawPages = useMemo(() => {
     if (!isPaged || !area.w || !area.h) return [];
     const H = pageTextHeight(area.h);
 
@@ -575,7 +576,16 @@ export function ReaderScreen() {
        * 最后一行会掉出可排印区 —— 被容器裁掉半截（看起来像"最后一行被吞了"、
        * 翻页后前后接不上）。用 floor(H/lineH) 兜一层，多一行都不给。
        */
-      const maxLines = Math.max(1, Math.floor(H / lineH));
+      // 行高用「实测相邻行的间距中位数」，而不是算出来的 fontSize*lineHeight。
+      // 实测值才反映真实排版（自定义字体的行高度量、舍入都可能不一样）。
+      const gaps: number[] = [];
+      for (let i = 1; i < measuredLines.length; i++) {
+        const g = measuredLines[i].y - measuredLines[i - 1].y;
+        if (g > 0) gaps.push(g);
+      }
+      gaps.sort((a, b) => a - b);
+      const realLineH = gaps.length ? gaps[Math.floor(gaps.length / 2)] : lineH;
+      const maxLines = Math.max(1, Math.floor(H / realLineH));
       const out: string[] = [];
       let cur: string[] = [];
       let baseY = measuredLines[0].y;
@@ -595,7 +605,7 @@ export function ReaderScreen() {
        * 返回 [] —— pages 空 → 整页渲染成空白，看起来就是「内容突然全部消失」。
        * 空的时候一定要 fall through 到下面的 paginate 兜底。
        */
-      const cleaned = out.filter((p) => p.trim().length > 0);
+      const cleaned = out.filter((p) => hasVisibleText(p));
       if (cleaned.length) return cleaned;
     }
 
@@ -621,6 +631,18 @@ export function ReaderScreen() {
     displayText,
     isPaged,
   ]);
+
+  /*
+   * 最终上屏的页数组：**在这里统一剔一次空页**。
+   * 之前只在 measuredLines 那条路径上过滤，一旦走到别的分支（或者数组被
+   * 别处改动），就会出现「页脚显示 4/15、正文却整页空」的情况。
+   * 放在这里过滤，翻页、页码、进度全部跟着干净。
+   */
+  const pages = useMemo(() => {
+    const clean = rawPages.filter((p) => hasVisibleText(p));
+    if (clean.length) return clean;
+    return rawPages.length ? [' '] : [];
+  }, [rawPages]);
 
   // 章节内容/排版变化后，按 pending 定位当前页（翻章时跳到首/末页），并持久化进度
   useEffect(() => {
