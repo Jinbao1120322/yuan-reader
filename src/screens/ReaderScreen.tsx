@@ -220,7 +220,7 @@ export function ReaderScreen() {
     () =>
       typeset(content, {
         indent: settings.paraIndent !== false,
-        paraGap: settings.paraGap ?? 1,
+        paraGap: settings.paraGap ?? 0,
       }),
     [content, settings.paraIndent, settings.paraGap]
   );
@@ -950,20 +950,20 @@ export function ReaderScreen() {
                   style={styles.step}
                   onPress={() =>
                     updateSettings({
-                      paraGap: Math.max(0, (settings.paraGap ?? 1) - 1),
+                      paraGap: Math.max(0, (settings.paraGap ?? 0) - 1),
                     })
                   }
                 >
                   <Text style={styles.stepText}>－</Text>
                 </TouchableOpacity>
                 <Text style={[styles.menuVal, { color: APP.text }]}>
-                  {(settings.paraGap ?? 1) === 0 ? '紧贴' : `空 ${settings.paraGap ?? 1} 行`}
+                  {(settings.paraGap ?? 0) === 0 ? '紧贴' : `空 ${settings.paraGap ?? 0} 行`}
                 </Text>
                 <TouchableOpacity
                   style={styles.step}
                   onPress={() =>
                     updateSettings({
-                      paraGap: Math.min(2, (settings.paraGap ?? 1) + 1),
+                      paraGap: Math.min(2, (settings.paraGap ?? 0) + 1),
                     })
                   }
                 >

@@ -122,7 +122,7 @@ const defaultSettings: Settings = {
   fontSize: 18,
   lineHeight: 1.8,
   paraIndent: true,
-  paraGap: 1,
+  paraGap: 0,
   pageMode: 'scroll',
   replaceRules: [],
   useSystemUA: true,
