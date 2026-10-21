@@ -1,5 +1,17 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { View, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, FlatList, Alert, Animated } from 'react-native';
+import { useCallback } from 'react';
+import {
+  View,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  Modal,
+  FlatList,
+  Alert,
+  Animated,
+  TextInput,
+} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { bookKey, useStore } from '../store/useStore';
@@ -23,6 +35,7 @@ import { paginate } from '../utils/paginate';
 import { trimPageEdges, typeset } from '../utils/typeset';
 import { hasVisibleText } from '../utils/text';
 import { captureRef } from 'react-native-view-shot';
+import * as Clipboard from 'expo-clipboard';
 import {
   clearBookChapters,
   countCached,
@@ -147,6 +160,30 @@ const styles = StyleSheet.create({
   },
   cacheBtnGhostText: { color: APP.danger, fontSize: 13, fontWeight: '600' },
   cacheCancel: { color: APP.danger, fontSize: 13, fontWeight: '700' },
+  filterMask: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    padding: 26,
+  },
+  filterCard: { backgroundColor: APP.card, borderRadius: 14, padding: 18 },
+  filterTitle: { color: APP.text, fontSize: 17, fontWeight: '700' },
+  filterHint: { color: APP.sub, fontSize: 11, marginTop: 4 },
+  filterLabel: { color: APP.sub, fontSize: 12, marginTop: 14, marginBottom: 6 },
+  filterInput: {
+    backgroundColor: APP.card2,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    color: APP.text,
+    fontSize: 14,
+    maxHeight: 96,
+    textAlignVertical: 'top',
+  },
+  filterBtns: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 18 },
+  filterBtn: { paddingHorizontal: 16, paddingVertical: 9, borderRadius: 8, marginLeft: 10 },
+  filterBtnPrimary: { backgroundColor: APP.accent },
+  filterBtnText: { color: APP.sub, fontSize: 14, fontWeight: '600' },
   presetBtn: {
     backgroundColor: APP.accent,
     borderRadius: 10,
@@ -512,6 +549,52 @@ export function ReaderScreen() {
   // 分页（仅非滚动模式）
   // 优先用真实排版量出来的行切页：每页正好填满能放下的行，底部不会留白。
   // 测量还没回来时，先用旧的字数估算顶一下，避免闪一下空白。
+  /*
+   * ===== 「过滤文字」功能 =====
+   * 长按正文 → 弹面板（自动带上剪贴板里刚复制的那段，比如盗版站插的广告）
+   * → 一键删除，或者自己写替换字。规则进 settings.replaceRules，
+   * 对所有章节全文生效，不是只改当前页。
+   */
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterDraft, setFilterDraft] = useState('');
+  const [filterReplace, setFilterReplace] = useState('');
+  const [reloadTick, setReloadTick] = useState(0);
+
+  const openFilterSheet = useCallback(async () => {
+    // 预填剪贴板：用户刚复制的那段文字，省得手打
+    try {
+      const clip = await Clipboard.getStringAsync();
+      if (clip && clip.trim()) setFilterDraft(clip.trim().slice(0, 200));
+    } catch {
+      /* 剪贴板读不到就算了，手动输入 */
+    }
+    setFilterReplace('');
+    setFilterOpen(true);
+  }, []);
+
+  const submitFilter = useCallback(() => {
+    const raw = filterDraft.trim();
+    if (!raw) {
+      setFilterOpen(false);
+      return;
+    }
+    // 用户输入按「字面」处理，正则元字符全部转义，避免意外
+    const pattern = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    updateSettings({
+      replaceRules: [
+        ...settings.replaceRules,
+        { pattern, replacement: filterReplace, isRegex: false },
+      ],
+    });
+    setFilterOpen(false);
+    // 当前章节重新走一遍净化，立刻看到效果
+    setReloadTick((t) => t + 1);
+    Alert.alert(
+      '已加入过滤',
+      `「${raw}」会${filterReplace ? `替换成「${filterReplace}」` : '被删除'}，从当前章节开始生效。`
+    );
+  }, [filterDraft, filterReplace, settings.replaceRules, updateSettings]);
+
   const rawPages = useMemo(() => {
     if (!isPaged || !area.w || !area.h) return [];
     const H = pageTextHeight(area.h, metaHeaderH, metaFooterH);
@@ -616,7 +699,15 @@ export function ReaderScreen() {
    * 放在这里过滤，翻页、页码、进度全部跟着干净。
    */
   const pages = useMemo(() => {
-    const clean = rawPages.filter((p) => hasVisibleText(p));
+    /*
+     * 压掉页内的空行。
+     * onTextLayout 切行时，某些行会拿到空 text（段落末尾、缩进行被拆开等），
+     * join('\n') 之后就成了 '\n\n' —— 屏幕上就是整行空白。
+     * 空行本身没有任何内容，压掉它不会丢字，只是让页面更紧凑。
+     */
+    const clean = rawPages
+      .map((p) => String(p || '').replace(/(\r?\n)(?:[ \t\u3000]*\r?\n)+/g, '$1'))
+      .filter((p) => hasVisibleText(p));
     if (clean.length) return clean;
     return rawPages.length ? [' '] : [];
   }, [rawPages]);
@@ -1111,7 +1202,10 @@ export function ReaderScreen() {
                   top: 0,
                   width: area.w,
                   height: area.h,
-                  opacity: 0,
+                  // 不能用 opacity: 0 —— iOS 会把「完全透明」的视图优化掉，
+                  // 压根不绘制，captureRef 截出来的就是一张空白图。
+                  // 0.01 肉眼绝对看不出来，但保证它真的被画出来。
+                  opacity: 0.01,
                 }}
               >
                 {shotTarget ? (
@@ -1157,6 +1251,7 @@ export function ReaderScreen() {
                 headerH={metaHeaderH}
                 footerH={metaFooterH}
                 images={pageImages}
+                onLongPress={openFilterSheet}
                 onTapLeft={handlePrevPage}
                 onTapRight={handleNextPage}
                 onTapCenter={toggleBars}
@@ -1281,6 +1376,57 @@ export function ReaderScreen() {
                 </TouchableOpacity>
               )}
             />
+          </View>
+        </View>
+      </Modal>
+
+      {/* 过滤文字面板：长按正文弹出 */}
+      <Modal
+        visible={filterOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFilterOpen(false)}
+      >
+        <View style={styles.filterMask}>
+          <View style={styles.filterCard}>
+            <Text style={styles.filterTitle}>过滤文字</Text>
+            <Text style={styles.filterHint}>
+              对所有章节全文生效，不只当前页
+            </Text>
+
+            <Text style={styles.filterLabel}>要过滤的原文（已自动带上剪贴板）</Text>
+            <TextInput
+              style={styles.filterInput}
+              value={filterDraft}
+              onChangeText={setFilterDraft}
+              multiline
+              placeholder="例如：都重生了谁谈恋爱啊无弹窗"
+              placeholderTextColor={APP.sub}
+            />
+
+            <Text style={styles.filterLabel}>替换成（留空 = 删除）</Text>
+            <TextInput
+              style={[styles.filterInput, { maxHeight: 52 }]}
+              value={filterReplace}
+              onChangeText={setFilterReplace}
+              placeholder="删除就留空"
+              placeholderTextColor={APP.sub}
+            />
+
+            <View style={styles.filterBtns}>
+              <TouchableOpacity
+                style={styles.filterBtn}
+                onPress={() => setFilterOpen(false)}
+              >
+                <Text style={styles.filterBtnText}>取消</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.filterBtn, styles.filterBtnPrimary]}
+                onPress={submitFilter}
+              >
+                <Text style={[styles.filterBtnText, { color: '#fff' }]}>确定</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1512,23 +1658,45 @@ export function ReaderScreen() {
                 ))}
               </View>
             </View>
-            {/* 临时诊断：把原始字符转义后打出来，用来看段落之间到底有没有 \n\n */}
+            {/* 临时诊断：统计换行/空行的个数，判断空行是在哪一层产生的 */}
             <Text
               selectable
               style={{ color: '#777', fontSize: 9, lineHeight: 12, marginTop: 14 }}
             >
-              {`[原文] ${JSON.stringify((content || '').slice(0, 80))}`}
+              {`[原文] 换行${((content || '').match(/\n/g) || []).length} 空行${
+                ((content || '').match(/\n[ \t\u3000]*\n/g) || []).length
+              }`}
               {'\n'}
-              {`[排版] ${JSON.stringify(displayText.slice(0, 80))}`}
+              {`[排版] 换行${(displayText.match(/\n/g) || []).length} 空行${
+                (displayText.match(/\n[ \t\u3000]*\n/g) || []).length
+              }`}
               {'\n'}
-              {`[本页] ${JSON.stringify(
-                (pages[Math.min(pageIndex, Math.max(0, pages.length - 1))] || '').slice(
-                  0,
-                  80
-                )
-              )}`}
+              {`[位图] 已截${Object.keys(pageImages).length}张`}
+              {'\n'}
+              {`[本页] 换行${
+                ((pages[Math.min(pageIndex, Math.max(0, pages.length - 1))] || '').match(
+                  /\n/g
+                ) || []).length
+              } 空行${
+                ((pages[Math.min(pageIndex, Math.max(0, pages.length - 1))] || '').match(
+                  /\n[ \t\u3000]*\n/g
+                ) || []).length
+              }`}
             </Text>
 
+            <View style={styles.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.menuLabel}>过滤文字</Text>
+                <Text style={styles.switchSub} numberOfLines={1}>
+                  长按正文也能打开 · 已有 {settings.replaceRules.length} 条规则
+                </Text>
+              </View>
+              <TouchableOpacity onPress={openFilterSheet}>
+                <Text style={{ color: APP.accent, fontSize: 13, fontWeight: '700' }}>
+                  添加
+                </Text>
+              </TouchableOpacity>
+            </View>
             <View style={styles.row}>
               <Text style={styles.menuLabel}>翻页模式</Text>
               <TouchableOpacity

@@ -82,6 +82,16 @@ interface CurlSlice {
  * 翻页前它是 under 页，翻完之后它变成当前页，节点不用重建，也就没有空窗。
  * 卷曲段的 12 个切片用的是同一页文本，也一起吃这个红利。
  */
+/*
+ * 压掉文本里的连续空行。
+ * 空行没有任何可见内容，但渲染时会占掉整整一行的高度 ——
+ * 段落之间就会莫名其妙空一截。数据从哪来的都可能带空行
+ * （原文结构、onTextLayout 切行、切页 join），所以在送进 Text 之前统一压一遍。
+ */
+function collapseBlankLines(text: string): string {
+  return String(text || '').replace(/(\r?\n)(?:[ \t\u3000]*\r?\n)+/g, '$1');
+}
+
 const PageLayer = React.memo(function PageLayer({
   text,
   imageUri,
@@ -106,6 +116,8 @@ const PageLayer = React.memo(function PageLayer({
    * 翻页期间完全不碰文字排版，只对一张图做几何变换，物理上不可能出现空白。
    * 没有图时才退回实时渲染文字（首屏、刚换章、刚换字号的那一下）。
    */
+  // 渲染前再压一次空行：双保险，就算上层数据漏了也不会显示空白行
+  const safeText = collapseBlankLines(text);
   if (imageUri) {
     return (
       <View style={[styles.page, { width, height, backgroundColor: bg }]}>
@@ -139,7 +151,7 @@ const PageLayer = React.memo(function PageLayer({
        */
       renderToHardwareTextureAndroid
     >
-      <Text style={[styles.pageText, textStyle]}>{text || ' '}</Text>
+      <Text style={[styles.pageText, textStyle]}>{safeText || ' '}</Text>
     </View>
   );
 });
@@ -159,6 +171,7 @@ interface Props {
   onTapLeft: () => void; // 章边界：翻到上一章
   onTapRight: () => void; // 章边界：翻到下一章
   onTapCenter: () => void; // 打开/收起工具栏
+  onLongPress?: () => void; // 长按正文：打开「过滤文字」面板
   /** 页眉占位高度，0 = 不显示页眉（正文直接排到边上） */
   headerH?: number;
   /** 页脚占位高度，0 = 不显示页脚 */
@@ -180,6 +193,7 @@ export function PageCurlView(props: Props) {
     headerH = PAGE_HEADER_H,
     footerH = PAGE_FOOTER_H,
     images,
+    onLongPress,
   } = props;
 
   const AW = Math.max(areaW, 1);
@@ -351,6 +365,15 @@ export function PageCurlView(props: Props) {
       });
     };
 
+    // 长按：打开过滤面板。放 Exclusive 最前面，手指按住不动 450ms 就归它
+    const longPress = Gesture.LongPress()
+      .minDuration(450)
+      .maxDistance(20)
+      .onEnd(() => {
+        'worklet';
+        if (onLongPress) runOnJS(onLongPress)();
+      });
+
     // 轻点必须单独用 Tap 手势：Pan 需要手指移动才会激活，
     // 纯点击（不移动）Pan 根本不会触发 onEnd —— 换到 Reanimated 之后
     // 「点屏幕中间收/开工具栏」就失灵了，工具栏一直挂着关不掉。
@@ -432,7 +455,7 @@ export function PageCurlView(props: Props) {
       });
 
     // 拖动优先，没拖动就交给 tap
-    return Gesture.Exclusive(pan, tap);
+    return Gesture.Exclusive(longPress, pan, tap);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [AW, THRESH, FLING, canPrev, canNext]);
 
@@ -449,9 +472,9 @@ export function PageCurlView(props: Props) {
   // 每份页面必须自带不透明底色。
   // 底层（还没翻到的那页）永远铺在最下面，如果上面的页面是透明的，
   // 两页文字就会叠印在一起 —— 看上去像「第二页的字印到了上一页」。
-  const pageBody = (text: string, pageIdx: number) => (
+  const pageBody = (rawText: string, pageIdx: number) => (
     <PageLayer
-      text={text}
+      text={collapseBlankLines(rawText)}
       imageUri={images?.[pageIdx]}
       width={areaW}
       height={areaH}
