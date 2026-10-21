@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system';
 import * as Font from 'expo-font';
 import { CustomFont } from '../store/useStore';
+import { resolveFontUri, withFileName } from './fontPath';
 
 /*
  * 自定义字体：导入 / 注册 / 删除
@@ -12,6 +13,8 @@ import { CustomFont } from '../store/useStore';
  * 所以样式里直接写 fontFamily: alias 就能用 —— 不需要去解析字体文件里的真实 family 名。
  *
  * 字体文件必须复制到 App 沙盒：DocumentPicker 给的是临时缓存路径，重启就没了。
+ * 但**只存文件名，不存绝对路径** —— iOS 每次更新 App，沙盒容器路径里的 UUID 会变，
+ * 存绝对路径就会"更新一次字体就失效"（文件还在新容器里，老路径找不到）。
  */
 
 const DIR = `${FileSystem.documentDirectory || ''}fonts/`;
@@ -24,6 +27,13 @@ export const FONT_EXTS = ['ttf', 'otf', 'ttc', 'otc'] as const;
 export function fontAlias(id: string): string {
   return `${FONT_ALIAS_PREFIX}_${id}`;
 }
+
+/** 字体文件的当前真实路径：永远按当前 documentDirectory 现拼 */
+export function fontUri(f: CustomFont): string {
+  return resolveFontUri(DIR, f);
+}
+
+export { withFileName };
 
 async function ensureDir(): Promise<void> {
   const info = await FileSystem.getInfoAsync(DIR);
@@ -63,18 +73,20 @@ export async function importFontFile(
     alias,
     label: fileName.replace(/\.[^.]+$/, '') || '自定义字体',
     uri,
+    file: `${id}.${ext}`,
   };
 }
 
-/** 重启后重新注册（字体注册只在本次进程内有效） */
+/** 重启 / 更新 App 后重新注册（字体注册只在本次进程内有效） */
 export async function registerFont(f: CustomFont): Promise<void> {
-  const info = await FileSystem.getInfoAsync(f.uri);
+  const uri = fontUri(withFileName(f));
+  const info = await FileSystem.getInfoAsync(uri);
   if (!info.exists) throw new Error(`字体文件不存在：${f.label}`);
-  await Font.loadAsync({ [f.alias]: { uri: f.uri } });
+  await Font.loadAsync({ [f.alias]: { uri } });
 }
 
 export async function deleteFontFile(f: CustomFont): Promise<void> {
-  await FileSystem.deleteAsync(f.uri, { idempotent: true }).catch(() => {});
+  await FileSystem.deleteAsync(fontUri(f), { idempotent: true }).catch(() => {});
 }
 
 /** 由 settings.fontId 找到当前该用的 fontFamily；没选或找不到就返回 null（跟随系统） */

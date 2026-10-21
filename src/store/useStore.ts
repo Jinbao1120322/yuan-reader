@@ -47,7 +47,14 @@ export interface CustomFont {
   id: string; // f + 时间戳
   alias: string; // 注册到 expo-font 的别名，同时就是样式里的 fontFamily
   label: string; // 显示名（文件名去后缀）
-  uri: string; // 复制到 App 沙盒后的路径，掉电不丢
+  uri: string; // 复制到 App 沙盒后的路径（仅作参考，换 App 版本后会失效）
+  /**
+   * 沙盒里的文件名（如 f1a2b3.ttf）。
+   * **必须存这个**：iOS 每次更新 App，沙盒容器的 UUID 会变，
+   * 绝对路径就指向了旧容器 —— 文件明明还在，却按老路径找不到，
+   * 表现为"更新一次字体就失效，要重新导入"。
+   */
+  file?: string;
 }
 
 export interface Settings {

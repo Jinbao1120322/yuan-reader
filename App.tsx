@@ -18,7 +18,7 @@ import { ReaderScreen } from './src/screens/ReaderScreen';
 import { APP } from './src/theme/theme';
 import { FontProvider } from './src/components/AppText';
 import { useStore } from './src/store/useStore';
-import { currentFontFamily, registerFont } from './src/utils/customFonts';
+import { currentFontFamily, registerFont, withFileName } from './src/utils/customFonts';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -93,13 +93,21 @@ export default function App() {
     }
     const f = fonts.find((x) => x.id === fontId);
     if (!f) return;
-    registerFont(f)
+    registerFont(withFileName(f))
       .then(() => {
         if (alive) setFamily(want);
       })
       .catch(() => {
-        // 字体文件被系统清掉了之类，静默退回系统字体，不要因此白屏
-        if (alive) setFamily(null);
+        // 文件确实找不到了（用户清过数据之类）：退回系统字体，
+        // 并把选中项清掉 —— 否则设置页会一直显示"使用中"，但实际用的是系统字体。
+        if (alive) {
+          setFamily(null);
+          try {
+            useStore.getState().updateSettings({ fontId: null });
+          } catch {
+            /* ignore */
+          }
+        }
       });
     return () => {
       alive = false;
