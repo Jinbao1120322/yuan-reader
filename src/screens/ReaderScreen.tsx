@@ -82,7 +82,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   drawerTitle: { color: APP.text, fontSize: 16, fontWeight: '700' },
-  chItem: { paddingVertical: 12, borderBottomWidth: 1, borderColor: APP.border },
+  // 固定高度：FlatList 的 getItemLayout 要拿它算偏移，目录才能精确跳到当前章
+  chItem: { height: 46, justifyContent: 'center', borderBottomWidth: 1, borderColor: APP.border },
   chActive: { backgroundColor: APP.card2 },
   chText: { color: APP.text, fontSize: 14 },
   menu: {
@@ -234,6 +235,23 @@ export function ReaderScreen() {
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
+
+  // 打开目录时滚到当前正在读的那一章，而不是停在第一章
+  useEffect(() => {
+    if (!tocOpen) return;
+    const t = setTimeout(() => {
+      try {
+        tocListRef.current?.scrollToIndex({
+          index,
+          viewPosition: 0.35, // 让当前章落在偏上的位置，前后文都能看到
+          animated: false,
+        });
+      } catch {
+        /* 列表还没量好，忽略这次 */
+      }
+    }, 70);
+    return () => clearTimeout(t);
+  }, [tocOpen, index]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [switchOpen, setSwitchOpen] = useState(false);
   // 详情页已经把目录拉过了，直接带过来，省一次请求（只对初始这本书有效，换源后要重拉）
@@ -247,11 +265,24 @@ export function ReaderScreen() {
   // 换源后要跳到「同一章」，先把当前章节名记下来，等新目录到了再匹配
   const pendingChapterTitle = useRef<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  const tocListRef = useRef<FlatList<any>>(null);
 
   // 顶/底工具栏显隐。点屏幕中间切换，方便沉浸阅读。
   // 用透明度而不是条件渲染：工具栏仍然占位，分页不会因为显隐而重排跳页。
   const [barsVisible, setBarsVisible] = useState(true);
   const barsOpacity = useRef(new Animated.Value(1)).current;
+  // 翻页时把工具栏收起来：它是浮层（74pt），展开状态下会盖住正文最后两行，
+  // 边翻边看就会觉得"前后接不上"。
+  const hideBars = () => {
+    if (!barsVisible) return;
+    setBarsVisible(false);
+    Animated.timing(barsOpacity, {
+      toValue: 0,
+      duration: 120,
+      useNativeDriver: true,
+    }).start();
+  };
+
   const toggleBars = () => {
     const next = !barsVisible;
     setBarsVisible(next);
@@ -790,7 +821,8 @@ export function ReaderScreen() {
   }, [index]);
 
   // 分页模式下：优先页内翻，到章边界再翻章
-  const handlePrev = () => {
+  const handlePrevPage = () => {
+    hideBars();
     if (!isPaged) return goPrev();
     if (pageIndex > 0) {
       const ni = pageIndex - 1;
@@ -803,7 +835,8 @@ export function ReaderScreen() {
       setIndex(index - 1);
     }
   };
-  const handleNext = () => {
+  const handleNextPage = () => {
+    hideBars();
     if (!isPaged) return goNext();
     if (pageIndex < pages.length - 1) {
       const ni = pageIndex + 1;
@@ -815,6 +848,16 @@ export function ReaderScreen() {
       pendingPageIndex.current = 0; // 跳到下一章首页
       setIndex(index + 1);
     }
+  };
+
+  // 底部按钮：直接跳到上一章 / 下一章的开头（不是翻页）
+  const handlePrevChapter = () => {
+    hideBars();
+    goPrev();
+  };
+  const handleNextChapter = () => {
+    hideBars();
+    goNext();
   };
 
   // 滚动模式：首次加载正文后，根据保存的百分比恢复阅读位置
@@ -978,8 +1021,8 @@ export function ReaderScreen() {
                 lineHeight={settings.lineHeight}
                 areaW={area.w}
                 areaH={area.h}
-                onTapLeft={handlePrev}
-                onTapRight={handleNext}
+                onTapLeft={handlePrevPage}
+                onTapRight={handleNextPage}
                 onTapCenter={toggleBars}
               />
               {/* 页眉：左章节名、右书名。固定在每页顶部，不随翻页移动 */}
@@ -1084,7 +1127,7 @@ export function ReaderScreen() {
       >
         <SafeAreaView edges={['bottom']} style={{ backgroundColor: theme.barBg }}>
           <View style={[styles.bottom, { backgroundColor: theme.barBg }]}>
-            <TouchableOpacity style={styles.bBtn} onPress={handlePrev}>
+            <TouchableOpacity style={styles.bBtn} onPress={handlePrevChapter}>
               <Text style={[styles.bText, { color: theme.barText }]}>
                 上一章
               </Text>
@@ -1095,7 +1138,7 @@ export function ReaderScreen() {
             <TouchableOpacity style={styles.bBtn} onPress={() => setMenuOpen(true)}>
               <Text style={[styles.bText, { color: theme.barText }]}>设置</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.bBtn} onPress={handleNext}>
+            <TouchableOpacity style={styles.bBtn} onPress={handleNextChapter}>
               <Text style={[styles.bText, { color: theme.barText }]}>
                 下一章
               </Text>
@@ -1117,8 +1160,12 @@ export function ReaderScreen() {
               </TouchableOpacity>
             </View>
             <FlatList
+              ref={tocListRef}
               data={chapters}
               keyExtractor={(i) => String(i.index)}
+              initialScrollIndex={index}
+              getItemLayout={(_, i) => ({ length: 46, offset: 46 * i, index: i })}
+              onScrollToIndexFailed={() => {}}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={[

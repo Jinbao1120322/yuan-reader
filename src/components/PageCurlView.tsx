@@ -1,5 +1,15 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, Animated, PanResponder } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, StyleSheet } from 'react-native';
+import Animated, {
+  Extrapolation,
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { ReaderTheme } from '../theme/theme';
 import {
   PAGE_FOOTER_H,
@@ -92,21 +102,22 @@ export function PageCurlView(props: Props) {
   const PI_R = Math.PI * R;
   const CU_END = -ARC; // 折痕的两端（卷曲段完全滑出屏幕）
 
-  const dragX = useRef(new Animated.Value(0)).current;
+  // 全部换成 Reanimated：手势和动画都在 UI 线程（worklet）里跑，
+  // 不经过 JS 桥，翻页/拖动都不会被 JS 线程拖累。
+  const dragX = useSharedValue(0);
+  const dirSV = useSharedValue(0); // 0 = next, 1 = prev（给 UI 线程判断用）
+  const animatingSV = useSharedValue(false);
 
   const latest = useRef(props);
   latest.current = props;
 
-  const grantX = useRef(0);
-  const animating = useRef(false);
+  const grantX = useSharedValue(0);
   const [dir, setDir] = useState<'next' | 'prev'>('next');
-  const dirRef = useRef<'next' | 'prev'>('next');
 
   useEffect(() => {
-    animating.current = false;
-    dragX.stopAnimation();
-    dragX.setValue(0);
-  }, [index, areaW, mode, dragX]);
+    animatingSV.value = false;
+    dragX.value = 0;
+  }, [index, areaW, mode, animatingSV, dragX]);
 
   // 每片的静态几何：只跟 R 有关，翻页过程中完全不变
   const curl = useMemo<CurlSlice[]>(() => {
@@ -130,182 +141,170 @@ export function PageCurlView(props: Props) {
     return out;
   }, [R, SLICE]);
 
-  const anim = useMemo(() => {
-    // 折痕位置（屏幕坐标）
-    const cuNext = dragX.interpolate({
-      inputRange: [-AW, 0],
-      outputRange: [CU_END, AW],
-      extrapolate: 'clamp',
-    });
-    const cuPrev = dragX.interpolate({
-      inputRange: [0, AW],
-      outputRange: [CU_END, AW],
-      extrapolate: 'clamp',
-    });
+  /*
+   * ===== 动画样式（全部在 UI 线程算）=====
+   * 折痕位置 c 的行程：
+   *   next：c 从 W 走到 -πR/2   prev：c 从 -πR/2 走到 W
+   * 下面每个 useAnimatedStyle 都自己算一遍 c —— worklet 里不做函数抽取，
+   * 避免跨 worklet 调用的序列化开销。
+   */
+  const cuOf = `__CU__`; // 占位，实际逻辑写在各 style 内
 
-    const mkFlat = (cu: any) =>
-      cu.interpolate({
-        inputRange: [CU_END, 0, AW],
-        outputRange: [0, 0, AW],
-        extrapolate: 'clamp',
-      });
+  /** 平铺段右侧遮罩的位移（等于折痕位置 c） */
+  const maskStyle = useAnimatedStyle(() => {
+    const cu =
+      dirSV.value === 0
+        ? interpolate(dragX.value, [-AW, 0], [CU_END, AW], Extrapolation.CLAMP)
+        : interpolate(dragX.value, [0, AW], [CU_END, AW], Extrapolation.CLAMP);
+    const flatW = interpolate(cu, [CU_END, 0, AW], [0, 0, AW], Extrapolation.CLAMP);
+    return { transform: [{ translateX: flatW }] };
+  }, [AW, CU_END]);
 
-    // 背面：纸面 [c+πR, W] 投影到 [2c+πR-W, c]
-    const mkBackW = (cu: any) =>
-      cu.interpolate({
-        inputRange: [CU_END, 0, AW - PI_R, AW],
-        outputRange: [AW + ARC - PI_R, AW - PI_R, 0, 0],
-        extrapolate: 'clamp',
-      });
-    const mkBackX = (cu: any) =>
-      cu.interpolate({
-        inputRange: [CU_END, AW],
-        outputRange: [2 * CU_END + PI_R - AW, 2 * AW + PI_R - AW],
-        extrapolate: 'clamp',
-      });
+  /** 纸背：宽度用 scaleX 表达，配 translateX 补偿 */
+  const backStyle = useAnimatedStyle(() => {
+    const cu =
+      dirSV.value === 0
+        ? interpolate(dragX.value, [-AW, 0], [CU_END, AW], Extrapolation.CLAMP)
+        : interpolate(dragX.value, [0, AW], [CU_END, AW], Extrapolation.CLAMP);
+    const backW = interpolate(
+      cu,
+      [CU_END, 0, AW - PI_R, AW],
+      [AW + ARC - PI_R, AW - PI_R, 0, 0],
+      Extrapolation.CLAMP
+    );
+    const backX = interpolate(
+      cu,
+      [CU_END, AW],
+      [2 * CU_END + PI_R - AW, 2 * AW + PI_R - AW],
+      Extrapolation.CLAMP
+    );
+    const scale = AW > 0 ? backW / AW : 1;
+    // scaleX 绕元素中心缩放，左缘会右移 W(1-s)/2，用 translateX 补回来
+    const tx = backX + (backW - AW) / 2;
+    return { transform: [{ translateX: tx }, { scaleX: scale }] };
+  }, [AW, CU_END, PI_R, ARC]);
 
-    // 折痕阴影：翻得越深越明显
-    const qNext = dragX.interpolate({
-      inputRange: [-AW, 0],
-      outputRange: [1, 0],
-      extrapolate: 'clamp',
-    });
-    const qPrev = dragX.interpolate({
-      inputRange: [0, AW],
-      outputRange: [0, 1],
-      extrapolate: 'clamp',
-    });
+  /** 折痕阴影：翻得越深越明显 */
+  const creaseStyle = useAnimatedStyle(() => {
+    const q =
+      dirSV.value === 0
+        ? interpolate(dragX.value, [-AW, 0], [1, 0], Extrapolation.CLAMP)
+        : interpolate(dragX.value, [0, AW], [0, 1], Extrapolation.CLAMP);
+    const op = interpolate(q, [0, 0.15, 0.85, 1], [0, 0.32, 0.32, 0], Extrapolation.CLAMP);
+    return { opacity: op };
+  }, [AW]);
 
-    return {
-      cuNext,
-      cuPrev,
-      flatNext: mkFlat(cuNext),
-      flatPrev: mkFlat(cuPrev),
-      backWNext: mkBackW(cuNext),
-      backWPrev: mkBackW(cuPrev),
-      backXNext: mkBackX(cuNext),
-      backXPrev: mkBackX(cuPrev),
-      creaseNext: qNext.interpolate({
-        inputRange: [0, 0.15, 0.85, 1],
-        outputRange: [0, 0.32, 0.32, 0],
-        extrapolate: 'clamp',
-      }),
-      creasePrev: qPrev.interpolate({
-        inputRange: [0, 0.15, 0.85, 1],
-        outputRange: [0, 0.32, 0.32, 0],
-        extrapolate: 'clamp',
-      }),
-      // slide 模式：整页平移
-      slide: { transform: [{ translateX: dragX }] },
-      curOpacity: qNext.interpolate({
-        inputRange: [0, 0.98, 1],
-        outputRange: [1, 1, 0],
-        extrapolate: 'clamp',
-      }),
-    };
-  }, [dragX, AW, PI_R, ARC, CU_END]);
+  /** 卷曲层整体跟着折痕平移（内部 12 片是静态的） */
+  const curlStyle = useAnimatedStyle(() => {
+    const cu =
+      dirSV.value === 0
+        ? interpolate(dragX.value, [-AW, 0], [CU_END, AW], Extrapolation.CLAMP)
+        : interpolate(dragX.value, [0, AW], [CU_END, AW], Extrapolation.CLAMP);
+    return { transform: [{ translateX: cu }] };
+  }, [AW, CU_END]);
 
-  const responder = useMemo(() => {
-    const springBack = () => {
-      Animated.spring(dragX, {
-        toValue: 0,
-        useNativeDriver: false, // 有 width 动画，native driver 不支持
-        speed: 20,
-        bounciness: 0,
-      }).start();
-    };
+  /** slide 模式：整页平移 + 收尾淡出 */
+  const slideStyle = useAnimatedStyle(() => {
+    if (dirSV.value !== 0) return { transform: [{ translateX: dragX.value }], opacity: 1 };
+    const q = interpolate(dragX.value, [-AW, 0], [1, 0], Extrapolation.CLAMP);
+    const op = interpolate(q, [0, 0.98, 1], [1, 1, 0], Extrapolation.CLAMP);
+    return { transform: [{ translateX: dragX.value }], opacity: op };
+  }, [AW]);
 
+
+  // 这四个回调必须稳定（worklet 里通过 runOnJS 调），内部读 latest 拿最新值
+  const commitFlip = useCallback((d: 'next' | 'prev') => {
+    const P = latest.current;
+    P.onPageChange(P.index + (d === 'next' ? 1 : -1));
+  }, []);
+  const doTapLeft = useCallback(() => latest.current.onTapLeft(), []);
+  const doTapRight = useCallback(() => latest.current.onTapRight(), []);
+  const doTapCenter = useCallback(() => latest.current.onTapCenter(), []);
+
+  const canPrev = props.canPrev;
+  const canNext = props.canNext;
+
+  const gesture = useMemo(() => {
+    // 全部 'worklet'：手势判定 + 动画都在 UI 线程跑，JS 线程再忙也不掉帧
     const flip = (d: 'next' | 'prev') => {
-      if (dirRef.current !== d) {
-        dirRef.current = d;
-        setDir(d);
-      }
-      animating.current = true;
-      Animated.timing(dragX, {
-        toValue: d === 'next' ? -AW : AW,
-        duration: 280,
-        useNativeDriver: false,
-      }).start(({ finished }) => {
-        animating.current = false;
-        if (finished) {
-          latest.current.onPageChange(
-            latest.current.index + (d === 'next' ? 1 : -1)
-          );
+      'worklet';
+      animatingSV.value = true;
+      dragX.value = withTiming(d === 'next' ? -AW : AW, { duration: 280 }, (fin) => {
+        if (fin) {
+          runOnJS(commitFlip)(d);
         } else {
-          dragX.setValue(0);
+          dragX.value = 0;
         }
+        animatingSV.value = false;
       });
     };
 
-    return PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 4,
-      onPanResponderTerminationRequest: () => false,
+    const springBack = () => {
+      'worklet';
+      dragX.value = withSpring(0, { damping: 24, stiffness: 320, mass: 0.6 });
+    };
 
-      onPanResponderGrant: (e) => {
-        grantX.current = e.nativeEvent.locationX;
-        if (!animating.current) {
-          dragX.stopAnimation();
-          dragX.setValue(0);
+    return Gesture.Pan()
+      .onBegin((e) => {
+        'worklet';
+        grantX.value = e.x;
+        if (!animatingSV.value) dragX.value = 0;
+      })
+      .onUpdate((e) => {
+        'worklet';
+        if (animatingSV.value) return;
+        const dx = e.translationX;
+        if (dx < -4 && dirSV.value !== 0) {
+          dirSV.value = 0;
+          runOnJS(setDir)('next');
+        } else if (dx > 4 && dirSV.value !== 1) {
+          dirSV.value = 1;
+          runOnJS(setDir)('prev');
         }
-      },
-
-      onPanResponderMove: (_, g) => {
-        if (animating.current) return;
-        if (g.dx < -4 && dirRef.current !== 'next') {
-          dirRef.current = 'next';
-          setDir('next');
-        } else if (g.dx > 4 && dirRef.current !== 'prev') {
-          dirRef.current = 'prev';
-          setDir('prev');
-        }
-        dragX.setValue(g.dx);
-      },
-
-      onPanResponderRelease: (_, g) => {
-        if (animating.current) return;
-        const P = latest.current;
-        const dist = Math.sqrt(g.dx * g.dx + g.dy * g.dy);
+        dragX.value = dx;
+      })
+      .onEnd((e) => {
+        'worklet';
+        if (animatingSV.value) return;
+        const dx = e.translationX;
+        const dist = Math.sqrt(dx * dx + e.translationY * e.translationY);
 
         // 轻点：三分区——左翻上一页 / 右翻下一页 / 中间切工具栏
         if (dist < 20) {
-          dragX.setValue(0);
-          const x = grantX.current;
+          dragX.value = 0;
+          const x = grantX.value;
           if (x < AW * 0.33) {
-            if (P.canPrev) flip('prev');
-            else P.onTapLeft();
+            if (canPrev) flip('prev');
+            else runOnJS(doTapLeft)();
           } else if (x > AW * 0.67) {
-            if (P.canNext) flip('next');
-            else P.onTapRight();
+            if (canNext) flip('next');
+            else runOnJS(doTapRight)();
           } else {
-            P.onTapCenter();
+            runOnJS(doTapCenter)();
           }
           return;
         }
 
-        const dx = g.dx;
         if (dx < -THRESH) {
-          if (P.canNext) flip('next');
-          else {
+          if (canNext) {
+            flip('next');
+          } else {
             springBack();
-            if (dx < -FLING) P.onTapRight();
+            if (dx < -FLING) runOnJS(doTapRight)();
           }
         } else if (dx > THRESH) {
-          if (P.canPrev) flip('prev');
-          else {
+          if (canPrev) {
+            flip('prev');
+          } else {
             springBack();
-            if (dx > FLING) P.onTapLeft();
+            if (dx > FLING) runOnJS(doTapLeft)();
           }
         } else {
           springBack();
         }
-      },
-
-      onPanResponderTerminate: () => {
-        springBack();
-      },
-    });
-  }, [dragX, AW, THRESH, FLING]);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [AW, THRESH, FLING, canPrev, canNext]);
 
   const textStyle = {
     color: theme.text,
@@ -337,77 +336,82 @@ export function PageCurlView(props: Props) {
 
   if (mode === 'slide') {
     return (
-      <View
-        style={[styles.container, { width: areaW, height: areaH, backgroundColor: theme.bg }]}
-        {...responder.panHandlers}
-      >
-        <View style={[styles.layer, { zIndex: 1 }]} pointerEvents="none">
-          {pageBody(slideUnder)}
-        </View>
-        <Animated.View
-          style={[styles.layer, { zIndex: 2, opacity: anim.curOpacity }, anim.slide]}
-          pointerEvents="none"
+      <GestureDetector gesture={gesture}>
+        <View
+          style={[styles.container, { width: areaW, height: areaH, backgroundColor: theme.bg }]}
         >
-          {pageBody(pages[index] ?? '')}
-        </Animated.View>
-      </View>
+          <View style={[styles.layer, { zIndex: 1 }]} pointerEvents="none">
+            {pageBody(slideUnder)}
+          </View>
+          <Animated.View style={[styles.layer, { zIndex: 2 }, slideStyle]} pointerEvents="none">
+            {pageBody(pages[index] ?? '')}
+          </Animated.View>
+        </View>
+      </GestureDetector>
     );
   }
 
-  const isNext = dir === 'next';
-  const flatW = isNext ? anim.flatNext : anim.flatPrev;
-  const backW = isNext ? anim.backWNext : anim.backWPrev;
-  const backX = isNext ? anim.backXNext : anim.backXPrev;
-  const cu = isNext ? anim.cuNext : anim.cuPrev;
-  const crease = isNext ? anim.creaseNext : anim.creasePrev;
-
   return (
-    <View
-      style={[styles.container, { width: areaW, height: areaH, backgroundColor: theme.bg }]}
-      {...responder.panHandlers}
-    >
+    <GestureDetector gesture={gesture}>
+      <View
+        style={[styles.container, { width: areaW, height: areaH, backgroundColor: theme.bg }]}
+      >
       {/* 底层：还没翻到的那一页 */}
       <View style={[styles.layer, { zIndex: 1 }]} pointerEvents="none">
         {pageBody(underText)}
       </View>
 
-      {/* 平铺段：纸面 [0, c]。容器宽度就是折痕位置，右侧自然被裁掉 */}
-      <Animated.View
-        style={[styles.flat, { zIndex: 2, width: flatW, height: areaH }]}
+      {/* 平铺段：纸面 [0, c]。
+          以前靠动画容器 width 来裁掉右边，width 不能用原生驱动；
+          现在改成「整页铺满 + 一块跟着折痕走的底色遮罩」，只动 translateX。 */}
+      <View
+        style={[styles.flat, { zIndex: 2, width: areaW, height: areaH }]}
         pointerEvents="none"
       >
-        <View style={{ width: areaW, height: areaH, position: 'absolute', left: 0, top: 0 }}>
-          {pageBody(sheetText)}
-        </View>
-      </Animated.View>
+        {pageBody(sheetText)}
+        {/* 遮罩必须放在平铺段**内部**：放外面会连下面那页一起盖掉，
+            右上角就变成一片空白了。这里只盖住本节自己的内容。 */}
+        <Animated.View
+          style={[
+            {
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              width: areaW,
+              height: areaH,
+              backgroundColor: theme.bg,
+            },
+            maskStyle,
+          ]}
+          pointerEvents="none"
+        />
+      </View>
 
-      {/* 纸背：绕过圆柱顶之后平铺回来的那一段，压住平铺段的右端 */}
+      {/* 纸背：绕过圆柱顶之后平铺回来的那一段，压住平铺段的右端。
+          纯色块，宽度用 scaleX 表达即可，肉眼无差。 */}
       <Animated.View
         style={[
           styles.back,
           {
-            zIndex: 3,
-            width: backW,
+            zIndex: 4,
+            width: areaW,
             height: areaH,
             backgroundColor: theme.barBg,
-            transform: [{ translateX: backX }],
           },
+          backStyle,
         ]}
         pointerEvents="none"
       >
         {/* 折痕投影：纸和下面那页之间的暗部，翻得越深越明显 */}
         <Animated.View
-          style={[styles.crease, { height: areaH, opacity: crease }]}
+          style={[styles.crease, { height: areaH }, creaseStyle]}
           pointerEvents="none"
         />
       </Animated.View>
 
       {/* 卷曲段：整段跟着折痕平移，内部 12 片全部静态 */}
       <Animated.View
-        style={[
-          styles.curlLayer,
-          { zIndex: 4, width: AW, height: areaH, transform: [{ translateX: cu }] },
-        ]}
+        style={[styles.curlLayer, { zIndex: 5, width: AW, height: areaH }, curlStyle]}
         pointerEvents="none"
       >
         {curl.map((c, i) => (
@@ -446,7 +450,8 @@ export function PageCurlView(props: Props) {
           </View>
         ))}
       </Animated.View>
-    </View>
+      </View>
+    </GestureDetector>
   );
 }
 
