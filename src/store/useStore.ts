@@ -278,6 +278,15 @@ export const useStore = create<State>()(
       name: 'yuan-reader-store',
       storage: createJSONStorage(() => AsyncStorage),
       version: 2,
+      // 目录缓存不写进主 store：书架十本两千章能到几 MB，
+      // 而 persist 每次 set（连翻页存进度）都要序列化整份数据，太大就写不进去，
+      // 冷启动后缓存就没了 —— 表现为"每次打开都要重新解析目录"。
+      // 目录改由 store/tocCache.ts 按书单独存。
+      partialize: (st) =>
+        ({
+          ...st,
+          shelf: st.shelf.map(({ cachedChapters, ...rest }) => rest),
+        }) as State,
       // v1 时期段间距的默认值是「空 1 行」，在 22 号字下视觉上太空，
       // 已经在用户手机上存下来了，这里统一收回「紧贴」。
       migrate: (persisted: any, ver: number) => {

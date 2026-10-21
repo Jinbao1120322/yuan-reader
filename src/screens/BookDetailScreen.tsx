@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { View, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { useStore } from '../store/useStore';
+import { bookKey, useStore } from '../store/useStore';
+import { saveTocCache } from '../store/tocCache';
 import { getBookInfo, getToc } from '../engine/SourceEngine';
 import { BookInfo, BookChapter } from '../engine/types';
 import { BookCover } from '../components/BookCover';
@@ -128,7 +129,11 @@ export function BookDetailScreen() {
       lastChapterIndex: 0,
       lastReadPos: 0,
     });
-    if (chapters.length) cacheChapters(bookUrl, sourceId, chapters);
+    if (chapters.length) {
+      cacheChapters(bookUrl, sourceId, chapters);
+      // 加入书架当场就把目录存进独立缓存，之后点书秒开，不用再解析一遍
+      saveTocCache(bookKey(bookUrl, sourceId), chapters);
+    }
   };
 
   // 换源 = 用新源的 bookUrl 重新加载这个详情页。replace 而不是 push，

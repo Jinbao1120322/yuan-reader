@@ -104,7 +104,7 @@ export function BookshelfScreen() {
   const renderItem = ({ item }: { item: ShelfBook }) => (
     <TouchableOpacity
       style={styles.item}
-      onPress={() => openDetail(item)}
+      onPress={() => openReader(item)}
       onLongPress={() => onLongPress(item)}
     >
       <BookCover uri={item.coverUrl} name={item.name} />

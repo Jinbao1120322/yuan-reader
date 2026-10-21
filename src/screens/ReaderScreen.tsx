@@ -1,9 +1,15 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { View, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, FlatList, Alert, Animated } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Battery from 'expo-battery';
 import { bookKey, useStore } from '../store/useStore';
+import {
+  clearTocCache,
+  loadTocCache,
+  saveTocCache,
+  TOC_TTL,
+} from '../store/tocCache';
 import { getBookInfo, getContent, getToc } from '../engine/SourceEngine';
 import { BookChapter } from '../engine/types';
 import { TopBar } from '../components/TopBar';
@@ -293,6 +299,9 @@ export function ReaderScreen() {
     };
   }, []);
   const appFont = useAppFont();
+  // 页眉页脚是绝对定位的，绝对定位不认父容器的安全区 padding，
+  // 必须自己把安全区高度加上，否则会被状态栏/灵动岛和 home indicator 压住。
+  const insets = useSafeAreaInsets();
 
   // zustand 的持久化是异步的（AsyncStorage）。首帧 shelf 还是空数组，
   // 这时候去找"有没有缓存目录"必然找不到 → 白白重拉一次。
@@ -391,14 +400,22 @@ export function ReaderScreen() {
         applyList(ch);
         return;
       }
-      // 书架里的书：目录建好就存着，24 小时内直接拿来用，不再跑网络
+      // ① 独立存储里的目录缓存（按书一个 key，不受主 store 体积影响）
+      const tc = await loadTocCache(currentKey);
+      if (tc && tc.chapters.length && Date.now() - tc.at < TOC_TTL) {
+        applyList(tc.chapters);
+        return;
+      }
+
+      // ② 主 store 里的旧缓存（老版本留下的），有就顺手搬到独立存储
       const cached = shelfBook?.cachedChapters;
       const fresh =
         cached &&
         cached.length > 0 &&
-        (!shelfBook?.cachedAt || Date.now() - shelfBook.cachedAt < 24 * 3600 * 1000);
+        (!shelfBook?.cachedAt || Date.now() - shelfBook.cachedAt < TOC_TTL);
       if (fresh) {
         applyList(cached as BookChapter[]);
+        saveTocCache(currentKey, cached as BookChapter[]);
         return;
       }
       const src = sources.find((s) => s.bookSourceUrl === sourceId);
@@ -407,7 +424,10 @@ export function ReaderScreen() {
       const tocUrl = (bi?.tocUrl || bookUrl) as string;
       const ch = await getToc(src, tocUrl, bookUrl);
       applyList(ch);
-      if (!cancel && ch.length) cacheChapters(bookUrl, sourceId, ch);
+      if (!cancel && ch.length) {
+        cacheChapters(bookUrl, sourceId, ch);
+        saveTocCache(currentKey, ch);
+      }
     };
     load();
     return () => {
@@ -543,6 +563,7 @@ export function ReaderScreen() {
   // 手动刷新目录：把缓存时间戳清掉，再踢一次 effect 走网络
   const refreshToc = () => {
     setMenuOpen(false);
+    clearTocCache(currentKey);
     if (!shelfBook) return;
     useStore.setState((st) => ({
       shelf: st.shelf.map((x) =>
@@ -784,7 +805,10 @@ export function ReaderScreen() {
               />
               {/* 页眉：左章节名、右书名。固定在每页顶部，不随翻页移动 */}
               <View
-                style={[styles.pageHeader, { backgroundColor: theme.bg }]}
+                style={[
+                  styles.pageHeader,
+                  { backgroundColor: theme.bg, top: insets.top },
+                ]}
                 pointerEvents="none"
               >
                 <Text
@@ -802,7 +826,10 @@ export function ReaderScreen() {
               </View>
               {/* 页脚：左「本章第几页 · 全书进度」、右电量 */}
               <View
-                style={[styles.pageFooter, { backgroundColor: theme.bg }]}
+                style={[
+                  styles.pageFooter,
+                  { backgroundColor: theme.bg, bottom: insets.bottom },
+                ]}
                 pointerEvents="none"
               >
                 <Text style={[styles.pageMeta, { color: theme.sub }]}>
