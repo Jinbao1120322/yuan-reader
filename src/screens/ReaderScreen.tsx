@@ -409,12 +409,20 @@ export function ReaderScreen() {
     if (!isPaged || !area.w || !area.h) return [];
     const H = pageTextHeight(area.h);
 
-    if (measuredLines.length) {
+    // 测量结果不可靠（只有一行，或所有行 y 都是 0）时别硬切，回落估算
+    const measuredOk =
+      measuredLines.length > 1 && measuredLines.some((l) => l.y > 0);
+
+    if (measuredOk) {
+      // 行高必须用「字号 × 行距」兜底。onTextLayout 在有些 RN 版本上
+      // 返回的 height 是 0，之前拿 H/10 兜底（≈70pt）比真实行高（≈41pt）大得多，
+      // 一页只塞十行，中间就空出一大块。
+      const lineH = settings.fontSize * settings.lineHeight;
       const out: string[] = [];
       let cur: string[] = [];
       let baseY = measuredLines[0].y;
       for (const ln of measuredLines) {
-        const bottom = ln.y + (ln.h > 0 ? ln.h : H / 10) - baseY;
+        const bottom = ln.y + (ln.h > 0 ? ln.h : lineH) - baseY;
         if (cur.length && bottom > H + 0.5) {
           out.push(trimPageEdges(cur.join('\n')));
           cur = [];
