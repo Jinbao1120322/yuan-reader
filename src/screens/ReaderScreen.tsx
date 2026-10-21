@@ -1341,34 +1341,6 @@ export function ReaderScreen() {
               </View>
             </View>
             <View style={styles.row}>
-              <Text style={styles.menuLabel}>段间距</Text>
-              <View style={styles.stepper}>
-                <TouchableOpacity
-                  style={styles.step}
-                  onPress={() =>
-                    updateSettings({
-                      paraGap: Math.max(0, (settings.paraGap ?? 0) - 1),
-                    })
-                  }
-                >
-                  <Text style={styles.stepText}>－</Text>
-                </TouchableOpacity>
-                <Text style={[styles.menuVal, { color: APP.text }]}>
-                  {(settings.paraGap ?? 0) === 0 ? '紧贴' : `空 ${settings.paraGap ?? 0} 行`}
-                </Text>
-                <TouchableOpacity
-                  style={styles.step}
-                  onPress={() =>
-                    updateSettings({
-                      paraGap: Math.min(2, (settings.paraGap ?? 0) + 1),
-                    })
-                  }
-                >
-                  <Text style={styles.stepText}>＋</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            <View style={styles.row}>
               <Text style={styles.menuLabel}>每页行数</Text>
               <View style={styles.stepper}>
                 <TouchableOpacity

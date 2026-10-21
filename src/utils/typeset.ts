@@ -22,7 +22,15 @@ const INDENT = '\u3000\u3000';
 
 export function typeset(text: string, opts: TypesetOpts = {}): string {
   const indent = opts.indent === false ? '' : INDENT;
-  const gap = Math.max(0, Math.min(3, opts.paraGap ?? 1));
+  /*
+   * 段落之间**不留空行**（用户 2026-10-21 明确要求）。
+   * 段落靠首行缩进两字区分就够了；空一行不但看着散，还会白占行数 ——
+   * 一页里段落多的话，光空行就能吃掉好几行的位置，正文被挤到下一页，
+   * 看起来就像"内容少了"。
+   * opts.paraGap 保留在接口里只为兼容旧调用，这里固定为 0。
+   */
+  const gap = 0;
+  void opts.paraGap;
 
   // 用 isBlankText 而不是 p.length > 0：只有零宽字符的段落要剔掉，
   // 否则它会变成一个"看不见的段落"，进而撑出一整页空白。
