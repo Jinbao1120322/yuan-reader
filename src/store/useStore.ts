@@ -277,7 +277,15 @@ export const useStore = create<State>()(
     {
       name: 'yuan-reader-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 1,
+      version: 2,
+      // v1 时期段间距的默认值是「空 1 行」，在 22 号字下视觉上太空，
+      // 已经在用户手机上存下来了，这里统一收回「紧贴」。
+      migrate: (persisted: any, ver: number) => {
+        if (ver < 2 && persisted && persisted.settings) {
+          if (persisted.settings.paraGap === 1) persisted.settings.paraGap = 0;
+        }
+        return persisted as any;
+      },
     }
   )
 );

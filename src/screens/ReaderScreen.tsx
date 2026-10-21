@@ -704,8 +704,17 @@ export function ReaderScreen() {
         </View>
       )}
 
+      {/* 顶栏做成浮层（绝对定位）：以前它占位，隐藏了也占着 111pt，
+          正文就永远铺不满屏。浮层之后正文区始终是整块屏幕，工具栏只是临时盖上来。 */}
       <Animated.View
-        style={{ opacity: barsOpacity }}
+        style={{
+          opacity: barsOpacity,
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          top: 0,
+          zIndex: 20,
+        }}
         pointerEvents={barsVisible ? 'auto' : 'none'}
       >
         <TopBar
@@ -742,7 +751,7 @@ export function ReaderScreen() {
               正文区高度少算 34pt，分页按多出来的高度切 → 页面显得排不满 */}
           <SafeAreaView
             style={{ flex: 1 }}
-            edges={['left', 'right']}
+            edges={['left', 'right', 'top', 'bottom']}
             onLayout={(e) => {
               const { width, height } = e.nativeEvent.layout;
               setArea((a) =>
@@ -855,9 +864,16 @@ export function ReaderScreen() {
         </View>
       )}
 
-      {/* 底部工具栏 */}
+      {/* 底部工具栏（同样浮层，不占正文空间） */}
       <Animated.View
-        style={{ opacity: barsOpacity }}
+        style={{
+          opacity: barsOpacity,
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 20,
+        }}
         pointerEvents={barsVisible ? 'auto' : 'none'}
       >
         <SafeAreaView edges={['bottom']} style={{ backgroundColor: theme.barBg }}>
