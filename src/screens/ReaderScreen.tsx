@@ -569,12 +569,19 @@ export function ReaderScreen() {
       // 返回的 height 是 0，之前拿 H/10 兜底（≈70pt）比真实行高（≈41pt）大得多，
       // 一页只塞十行，中间就空出一大块。
       const lineH = settings.fontSize * settings.lineHeight;
+      /*
+       * 双保险：除了按坐标切，还要卡死「一页最多几行」。
+       * onTextLayout 报的 line.height 会比实际渲染略小一点，几十行累积下来，
+       * 最后一行会掉出可排印区 —— 被容器裁掉半截（看起来像"最后一行被吞了"、
+       * 翻页后前后接不上）。用 floor(H/lineH) 兜一层，多一行都不给。
+       */
+      const maxLines = Math.max(1, Math.floor(H / lineH));
       const out: string[] = [];
       let cur: string[] = [];
       let baseY = measuredLines[0].y;
       for (const ln of measuredLines) {
         const bottom = ln.y + (ln.h > 0 ? ln.h : lineH) - baseY;
-        if (cur.length && bottom > H + 0.5) {
+        if (cur.length && (bottom > H + 0.5 || cur.length >= maxLines)) {
           out.push(trimPageEdges(cur.join('\n')));
           cur = [];
           baseY = ln.y;
@@ -582,16 +589,25 @@ export function ReaderScreen() {
         cur.push(ln.text);
       }
       if (cur.length) out.push(trimPageEdges(cur.join('\n')));
-      if (out.length) return out.filter((p) => p.trim().length > 0);
+      /*
+       * 这里必须判断**过滤之后**的数组长度。
+       * 原来写的是 `if (out.length)`（过滤前），一旦过滤完变成空数组就会直接
+       * 返回 [] —— pages 空 → 整页渲染成空白，看起来就是「内容突然全部消失」。
+       * 空的时候一定要 fall through 到下面的 paginate 兜底。
+       */
+      const cleaned = out.filter((p) => p.trim().length > 0);
+      if (cleaned.length) return cleaned;
     }
 
-    return paginate(displayText, {
+    const fallback = paginate(displayText, {
       fontSize: settings.fontSize,
       lineHeight: settings.lineHeight,
       width: pageTextWidth(area.w),
       height: H,
       charsPerLine,
     });
+    // 最后一道保险：无论如何不能让 pages 是空数组，否则整页全白
+    return fallback.length ? fallback : [' '];
     // 换字体后行高和字宽都会变，必须重新分页
   }, [
     content,
