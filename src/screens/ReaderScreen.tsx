@@ -202,6 +202,11 @@ export function ReaderScreen() {
   // 实测「一行能放几个字」。字体不同字宽差很多，靠估算必然失准
   // （换自定义字体后估 17 字、实际只放得下 16 字，每行最后一个字被挤到下一行单独成行）。
   const [charsPerLine, setCharsPerLine] = useState(0);
+  // 真实排版测量出的每一行（y/height 由原生排版给出）。
+  // 用它切页才能把页面排满 —— 按「能放几行」估算永远会低估，底部就空一块。
+  const [measuredLines, setMeasuredLines] = useState<
+    { text: string; y: number; h: number }[]
+  >([]);
   // 手动刷新目录时 +1，用来强制重新走一次加载
   const [tocTick, setTocTick] = useState(0);
   const appFont = useAppFont();
@@ -375,16 +380,37 @@ export function ReaderScreen() {
   }, [index, chapters.length]);
 
   // 分页（仅非滚动模式）
+  // 优先用真实排版量出来的行切页：每页正好填满能放下的行，底部不会留白。
+  // 测量还没回来时，先用旧的字数估算顶一下，避免闪一下空白。
   const pages = useMemo(() => {
     if (!isPaged || !area.w || !area.h) return [];
+    const H = pageTextHeight(area.h);
+
+    if (measuredLines.length) {
+      const out: string[] = [];
+      let cur: string[] = [];
+      let baseY = measuredLines[0].y;
+      for (const ln of measuredLines) {
+        const bottom = ln.y + (ln.h > 0 ? ln.h : H / 10) - baseY;
+        if (cur.length && bottom > H + 0.5) {
+          out.push(cur.join('\n'));
+          cur = [];
+          baseY = ln.y;
+        }
+        cur.push(ln.text);
+      }
+      if (cur.length) out.push(cur.join('\n'));
+      if (out.length) return out;
+    }
+
     return paginate(content, {
       fontSize: settings.fontSize,
       lineHeight: settings.lineHeight,
       width: pageTextWidth(area.w),
-      height: pageTextHeight(area.h),
+      height: H,
       charsPerLine,
     });
-    // 换字体后行高和字宽都会变，必须重新分页，否则每页行数对不上
+    // 换字体后行高和字宽都会变，必须重新分页
   }, [
     content,
     area.w,
@@ -393,6 +419,7 @@ export function ReaderScreen() {
     settings.lineHeight,
     settings.fontId,
     charsPerLine,
+    measuredLines,
     isPaged,
   ]);
 
@@ -548,6 +575,43 @@ export function ReaderScreen() {
         </View>
       )}
 
+      {/* 真实排版测量：把整章用同样的宽度/字号/行高渲染一遍（不可见），
+          原生排版会告诉我们每一行落在哪个 y、有多高。
+          用它切页，每页正好填满 —— 不再是「估算能放几行」。 */}
+      {isPaged && area.w > 0 && !!content && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: pageTextWidth(area.w),
+            opacity: 0,
+          }}
+        >
+          <Text
+            key={`measure-${settings.fontSize}-${settings.lineHeight}-${appFont || 'sys'}-${Math.round(area.w)}-${index}-${content.length}`}
+            style={{
+              fontSize: settings.fontSize,
+              lineHeight: settings.fontSize * settings.lineHeight,
+            }}
+            onTextLayout={(e: any) => {
+              const ls = e && e.nativeEvent && e.nativeEvent.lines;
+              if (!ls || !ls.length) return;
+              setMeasuredLines(
+                ls.map((l: any) => ({
+                  text: l.text || '',
+                  y: l.y || 0,
+                  h: l.height || 0,
+                }))
+              );
+            }}
+          >
+            {content}
+          </Text>
+        </View>
+      )}
+
       <Animated.View
         style={{ opacity: barsOpacity }}
         pointerEvents={barsVisible ? 'auto' : 'none'}
@@ -582,9 +646,11 @@ export function ReaderScreen() {
         </View>
       ) : isPaged ? (
         <View style={{ flex: 1 }}>
+          {/* 底部安全区由下面那条工具栏负责，这里再吃一次 bottom 会让
+              正文区高度少算 34pt，分页按多出来的高度切 → 页面显得排不满 */}
           <SafeAreaView
             style={{ flex: 1 }}
-            edges={['left', 'right', 'bottom']}
+            edges={['left', 'right']}
             onLayout={(e) => {
               const { width, height } = e.nativeEvent.layout;
               setArea((a) =>
@@ -595,7 +661,9 @@ export function ReaderScreen() {
             {area.w > 0 ? (
               <PageCurlView
                 pages={pages}
-                index={pageIndex}
+                /* 排版测量回来后页数可能变少（每页能装的行数和估算不同），
+                   页号要夹在有效范围内，否则会停在一张不存在的页上 */
+                index={Math.min(pageIndex, Math.max(0, pages.length - 1))}
                 onPageChange={(i) => {
                   setPageIndex(i);
                   savePageProgress(i);
@@ -663,7 +731,7 @@ export function ReaderScreen() {
           <View style={[styles.bottom, { backgroundColor: theme.barBg }]}>
             <TouchableOpacity style={styles.bBtn} onPress={handlePrev}>
               <Text style={[styles.bText, { color: theme.barText }]}>
-                {isPaged ? '上一页' : '上一章'}
+                上一章
               </Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.bBtn} onPress={() => setTocOpen(true)}>
@@ -674,7 +742,7 @@ export function ReaderScreen() {
             </TouchableOpacity>
             <TouchableOpacity style={styles.bBtn} onPress={handleNext}>
               <Text style={[styles.bText, { color: theme.barText }]}>
-                {isPaged ? '下一页' : '下一章'}
+                下一章
               </Text>
             </TouchableOpacity>
           </View>
