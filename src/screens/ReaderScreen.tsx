@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { View, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, FlatList, Alert, Animated } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import * as Battery from 'expo-battery';
 import { bookKey, useStore } from '../store/useStore';
 import {
   clearTocCache,
@@ -35,8 +34,6 @@ import { SearchBook } from '../engine/types';
 import { matchChapterIndex } from '../utils/bookMatch';
 import { useAppFont } from '../components/AppText';
 import {
-  PAGE_FOOTER_H,
-  PAGE_HEADER_H,
   PAGE_PAD_BOTTOM,
   PAGE_FIXED_LINES,
   PAGE_PAD_H,
@@ -168,30 +165,6 @@ const styles = StyleSheet.create({
   switchPillOn: { backgroundColor: APP.accent, borderColor: APP.accent },
   switchPillText: { color: APP.sub, fontSize: 13, fontWeight: '600' },
   switchPillTextOn: { color: '#fff' },
-  pageHeader: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    height: PAGE_HEADER_H,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: PAGE_PAD_H,
-  },
-  pageFooter: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: PAGE_FOOTER_H,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: PAGE_PAD_H,
-  },
-  pageMeta: { fontSize: 10.5, flexShrink: 1 },
-  pageMetaRight: { marginLeft: 12, textAlign: 'right' },
   themes: { flexDirection: 'row' },
   themeDot: {
     width: 30,
@@ -340,38 +313,14 @@ export function ReaderScreen() {
   // 手动刷新目录时 +1，用来强制重新走一次加载
   const [tocTick, setTocTick] = useState(0);
 
-  // 页脚右下角的电量
-  const [battery, setBattery] = useState<number | null>(null);
-  useEffect(() => {
-    let alive = true;
-    Battery.getBatteryLevelAsync()
-      .then((v) => {
-        if (alive) setBattery(v);
-      })
-      .catch(() => {});
-    let sub: any = null;
-    try {
-      sub = Battery.addBatteryLevelListener(({ batteryLevel }) => setBattery(batteryLevel));
-    } catch {
-      /* 个别环境不支持订阅，静态读一次就够 */
-    }
-    return () => {
-      alive = false;
-      try {
-        sub && sub.remove();
-      } catch {
-        /* ignore */
-      }
-    };
-  }, []);
   const appFont = useAppFont();
   // 页眉页脚是绝对定位的，绝对定位不认父容器的安全区 padding，
   // 必须自己把安全区高度加上，否则会被状态栏/灵动岛和 home indicator 压住。
   const insets = useSafeAreaInsets();
-  // 页眉页脚开关：关掉时正文一路排到边上，不留任何占位
-  const showMeta = settings.showMeta === true;
-  const metaHeaderH = showMeta ? PAGE_HEADER_H : 0;
-  const metaFooterH = showMeta ? PAGE_FOOTER_H : 0;
+  // 页眉页脚已移除（用户 2026-10-21 决定不要电量/进度/章节名），
+  // 正文直接排满整屏，不留任何占位。
+  const metaHeaderH = 0;
+  const metaFooterH = 0;
 
   // zustand 的持久化是异步的（AsyncStorage）。首帧 shelf 还是空数组，
   // 这时候去找"有没有缓存目录"必然找不到 → 白白重拉一次。
@@ -1092,71 +1041,6 @@ export function ReaderScreen() {
                 onTapRight={handleNextPage}
                 onTapCenter={toggleBars}
               />
-              {showMeta && (
-              <>
-              {/* 页眉：左章节名、右书名。固定在每页顶部，不随翻页移动 */}
-              <View
-                style={[
-                  styles.pageHeader,
-                  {
-                    backgroundColor: settings.debugLayout
-                      ? 'rgba(0,160,255,0.35)'
-                      : theme.bg,
-                    top: insets.top,
-                  },
-                ]}
-                pointerEvents="none"
-              >
-                <Text
-                  style={[styles.pageMeta, { color: theme.sub }]}
-                  numberOfLines={1}
-                >
-                  {curChapter?.name || ''}
-                </Text>
-                <Text
-                  style={[styles.pageMeta, styles.pageMetaRight, { color: theme.sub }]}
-                  numberOfLines={1}
-                >
-                  {name}
-                </Text>
-              </View>
-              {/* 页脚：左「本章第几页 · 全书进度」、右电量 */}
-              <View
-                style={[
-                  styles.pageFooter,
-                  {
-                    backgroundColor: settings.debugLayout
-                      ? 'rgba(255,60,60,0.35)'
-                      : theme.bg,
-                    bottom: Math.max(4, insets.bottom - 14),
-                  },
-                ]}
-                pointerEvents="none"
-              >
-                <Text style={[styles.pageMeta, { color: theme.sub }]}>
-                  {pages.length
-                    ? `${pageIndex + 1}/${pages.length} · ${
-                        ((pages[Math.min(pageIndex, pages.length - 1)] || '')
-                          .split('\n')
-                          .filter((l) => l.length > 0).length
-                      )}行`
-                    : ''}
-                  {chapters.length
-                    ? ` · 全书 ${(
-                        ((index + (pages.length ? (pageIndex + 1) / pages.length : 0)) /
-                          chapters.length) *
-                        100
-                      ).toFixed(1)}%`
-                    : ''}
-                </Text>
-                <Text
-                  style={[styles.pageMeta, styles.pageMetaRight, { color: theme.sub }]}
-                >
-                  {battery == null ? '' : `${Math.round(battery * 100)}%`}
-                </Text>
-              </View>
-              </>
-              )}
               </>
             ) : (
               <View style={styles.center}>
@@ -1485,27 +1369,6 @@ export function ReaderScreen() {
               </View>
             </View>
             <View style={styles.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuLabel}>页眉页脚</Text>
-                <Text style={styles.switchSub} numberOfLines={1}>
-                  {showMeta ? '显示章节名 / 进度 / 电量' : '已隐藏，正文排满整屏'}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={[styles.switchPill, showMeta && styles.switchPillOn]}
-                onPress={() => updateSettings({ showMeta: !showMeta })}
-              >
-                <Text
-                  style={[
-                    styles.switchPillText,
-                    showMeta && styles.switchPillTextOn,
-                  ]}
-                >
-                  {showMeta ? '显示' : '隐藏'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.row}>
               <Text style={styles.menuLabel}>每页行数</Text>
               <View style={styles.stepper}>
                 <TouchableOpacity
@@ -1532,32 +1395,6 @@ export function ReaderScreen() {
                   <Text style={styles.stepText}>＋</Text>
                 </TouchableOpacity>
               </View>
-            </View>
-            <View style={styles.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuLabel}>显示排版边界</Text>
-                <Text style={styles.switchSub} numberOfLines={1}>
-                  页眉染蓝、页脚染红，用来查正文有没有被压住
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={[
-                  styles.switchPill,
-                  settings.debugLayout && styles.switchPillOn,
-                ]}
-                onPress={() =>
-                  updateSettings({ debugLayout: !settings.debugLayout })
-                }
-              >
-                <Text
-                  style={[
-                    styles.switchPillText,
-                    settings.debugLayout && styles.switchPillTextOn,
-                  ]}
-                >
-                  {settings.debugLayout ? '开' : '关'}
-                </Text>
-              </TouchableOpacity>
             </View>
             <View style={styles.row}>
               <Text style={styles.menuLabel}>段首缩进</Text>

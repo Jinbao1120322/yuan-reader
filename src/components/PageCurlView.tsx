@@ -70,6 +70,57 @@ interface CurlSlice {
   dark: number; // 压暗强度（原版是 rgb *= cos θ）
 }
 
+/*
+ * 单页内容层（memo 化）
+ * ===========================================================================
+ * 为什么必须是 memo 组件：
+ * 翻页完成时 index 变 1，整个 PageCurlView 重渲染。原来 pageBody 是内联函数，
+ * 每次都会创建全新的 View + Text —— 新页得重新做一次文字排版，几十毫秒里
+ * 底下的页面是空的，也就是用户看到的「下一页空白一下才出现内容」。
+ *
+ * memo 之后，同一个 text 字符串渲染出的页面会被 React 复用：
+ * 翻页前它是 under 页，翻完之后它变成当前页，节点不用重建，也就没有空窗。
+ * 卷曲段的 12 个切片用的是同一页文本，也一起吃这个红利。
+ */
+const PageLayer = React.memo(function PageLayer({
+  text,
+  width,
+  height,
+  bg,
+  padTop,
+  padBottom,
+  textStyle,
+}: {
+  text: string;
+  width: number;
+  height: number;
+  bg: string;
+  padTop: number;
+  padBottom: number;
+  textStyle: any;
+}) {
+  return (
+    <View
+      style={[
+        styles.page,
+        {
+          width,
+          height,
+          backgroundColor: bg,
+          paddingTop: padTop,
+          paddingBottom: padBottom,
+        },
+      ]}
+      // 仿真翻页一次要画十几层同一个页面，光栅化后整页是一张位图，
+      // 翻页只是搬/缩放图片，帧率会好很多。
+      shouldRasterizeIOS
+      renderToHardwareTextureAndroid
+    >
+      <Text style={[styles.pageText, textStyle]}>{text || ' '}</Text>
+    </View>
+  );
+});
+
 interface Props {
   pages: string[];
   index: number; // 当前页（受控）
@@ -359,35 +410,29 @@ export function PageCurlView(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [AW, THRESH, FLING, canPrev, canNext]);
 
-  const textStyle = {
-    color: theme.text,
-    fontSize,
-    lineHeight: fontSize * lineHeight,
-  };
+  // 必须 useMemo：这个对象每次新建的话，下面的 PageLayer.memo 永远不会命中
+  const textStyle = useMemo(
+    () => ({
+      color: theme.text,
+      fontSize,
+      lineHeight: fontSize * lineHeight,
+    }),
+    [theme.text, fontSize, lineHeight]
+  );
 
   // 每份页面必须自带不透明底色。
   // 底层（还没翻到的那页）永远铺在最下面，如果上面的页面是透明的，
   // 两页文字就会叠印在一起 —— 看上去像「第二页的字印到了上一页」。
   const pageBody = (text: string) => (
-    <View
-      style={[
-        styles.page,
-        {
-          width: areaW,
-          height: areaH,
-          backgroundColor: theme.bg,
-          paddingTop: PAGE_PAD_TOP + headerH,
-          paddingBottom: PAGE_PAD_BOTTOM + footerH,
-        },
-      ]}
-      // 仿真翻页一次要画十几层同一个页面（底页/平铺段/纸背/每一片卷曲），
-      // 每层都是整页文字的原生排版，JS 线程扛不住就会掉帧。
-      // 光栅化之后整页变成一张位图，翻页只是搬/缩放图片，帧率立刻上来。
-      shouldRasterizeIOS
-      renderToHardwareTextureAndroid
-    >
-      <Text style={[styles.pageText, textStyle]}>{text || ' '}</Text>
-    </View>
+    <PageLayer
+      text={text}
+      width={areaW}
+      height={areaH}
+      bg={theme.bg}
+      padTop={PAGE_PAD_TOP + headerH}
+      padBottom={PAGE_PAD_BOTTOM + footerH}
+      textStyle={textStyle}
+    />
   );
 
   // simulate：翻下一页时上层是当前页、底层是下一页；翻上一页时上层是上一页、底层是当前页。

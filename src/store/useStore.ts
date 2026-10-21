@@ -64,8 +64,6 @@ export interface Settings {
   paraIndent: boolean; // 段首缩进两字
   paraGap: number; // 段落之间空几行
   linesPerPage: number; // 每页固定行数（用户可调，10-30）
-  debugLayout: boolean; // 调试：把页眉页脚的占位染成半透明色，看正文有没有被挡
-  showMeta: boolean; // 是否显示页眉（章节名/书名）和页脚（进度/电量）
   bgColor?: string;
   pageMode: PageMode;
   replaceRules: ReplaceRule[];
@@ -127,8 +125,6 @@ const defaultSettings: Settings = {
   paraIndent: true,
   paraGap: 0,
   linesPerPage: 18,
-  debugLayout: false,
-  showMeta: false,
   pageMode: 'scroll',
   replaceRules: [],
   useSystemUA: true,
