@@ -7,6 +7,10 @@ const path = require('path');
 
 const config = getDefaultConfig(__dirname);
 
+// SDK 53 的 Metro 默认读 package.json 的 exports 字段；SDK 51 默认不读，
+// 而 cheerio 1.2 只有 exports 里声明了 "./slim"，不开这个开关就解析不到。
+config.resolver.unstable_enablePackageExports = true;
+
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules || {}),
   string_decoder: path.resolve(__dirname, 'shims/string_decoder.js'),

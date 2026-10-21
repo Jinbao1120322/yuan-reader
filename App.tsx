@@ -55,9 +55,11 @@ function TabNavigator() {
   const insets = useSafeAreaInsets();
   return (
     <Tab.Navigator
+      // RN Navigation 6 里没有 screenOptions.sceneStyle（那是 7 才有的），
+      // 背景色改到 navigator 的 sceneContainerStyle 上
+      sceneContainerStyle={{ backgroundColor: APP.bg }}
       screenOptions={{
         headerShown: false,
-        sceneStyle: { backgroundColor: APP.bg },
         tabBarStyle: {
           backgroundColor: APP.card,
           borderTopColor: APP.border,

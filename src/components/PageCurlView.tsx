@@ -244,7 +244,27 @@ export function PageCurlView(props: Props) {
       dragX.value = withSpring(0, { damping: 24, stiffness: 320, mass: 0.6 });
     };
 
-    return Gesture.Pan()
+    // 轻点必须单独用 Tap 手势：Pan 需要手指移动才会激活，
+    // 纯点击（不移动）Pan 根本不会触发 onEnd —— 换到 Reanimated 之后
+    // 「点屏幕中间收/开工具栏」就失灵了，工具栏一直挂着关不掉。
+    const tap = Gesture.Tap()
+      .maxDistance(14)
+      .onEnd((e) => {
+        'worklet';
+        if (animatingSV.value) return;
+        const x = e.x;
+        if (x < AW * 0.33) {
+          if (canPrev) flip('prev');
+          else runOnJS(doTapLeft)();
+        } else if (x > AW * 0.67) {
+          if (canNext) flip('next');
+          else runOnJS(doTapRight)();
+        } else {
+          runOnJS(doTapCenter)();
+        }
+      });
+
+    const pan = Gesture.Pan()
       .onBegin((e) => {
         'worklet';
         grantX.value = e.x;
@@ -303,6 +323,9 @@ export function PageCurlView(props: Props) {
           springBack();
         }
       });
+
+    // 拖动优先，没拖动就交给 tap
+    return Gesture.Exclusive(pan, tap);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [AW, THRESH, FLING, canPrev, canNext]);
 
