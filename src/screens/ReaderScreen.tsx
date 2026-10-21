@@ -22,6 +22,13 @@ import {
 } from '../utils/localBook';
 import { paginate } from '../utils/paginate';
 import { trimPageEdges, typeset } from '../utils/typeset';
+import {
+  clearBookChapters,
+  countCached,
+  hasChapter,
+  loadChapter,
+  saveChapter,
+} from '../utils/chapterCache';
 import { SourceSwitchSheet } from '../components/SourceSwitchSheet';
 import { SearchBook } from '../engine/types';
 import { matchChapterIndex } from '../utils/bookMatch';
@@ -113,6 +120,32 @@ const styles = StyleSheet.create({
   },
   switchSub: { color: APP.sub, fontSize: 11, marginTop: 3 },
   switchGo: { color: APP.accent, fontSize: 14, fontWeight: '700' },
+  cacheRow: {
+    flexDirection: 'row',
+    marginBottom: 8,
+    marginTop: 2,
+  },
+  cacheBtn: {
+    flex: 1,
+    backgroundColor: APP.card2,
+    borderRadius: 8,
+    paddingVertical: 9,
+    alignItems: 'center',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: APP.border,
+  },
+  cacheBtnText: { color: APP.text, fontSize: 13, fontWeight: '600' },
+  cacheBtnGhost: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: APP.danger,
+    justifyContent: 'center',
+  },
+  cacheBtnGhostText: { color: APP.danger, fontSize: 13, fontWeight: '600' },
+  cacheCancel: { color: APP.danger, fontSize: 13, fontWeight: '700' },
   presetBtn: {
     backgroundColor: APP.accent,
     borderRadius: 10,
@@ -452,8 +485,15 @@ export function ReaderScreen() {
             if (!cancel) setContent('');
             return;
           }
-          const res = await getContent(src, ch.url);
-          text = res.content;
+          // 先看本地缓存：命中就不用联网，翻页/重进都是秒开
+          const cachedText = await loadChapter(currentKey, index);
+          if (cachedText) {
+            text = cachedText;
+          } else {
+            const res = await getContent(src, ch.url);
+            text = res.content;
+            if (text) saveChapter(currentKey, index, text);
+          }
         }
         // 应用全局替换净化
         for (const r of settings.replaceRules) {
@@ -558,6 +598,105 @@ export function ReaderScreen() {
   };
   const goNext = () => {
     if (index < chapters.length - 1) setIndex(index + 1);
+  };
+
+  // —— 正文缓存 ——
+  // 阅读时自动把后面 5 章抓下来，翻页不用等网络
+  const prefetchingRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    if (loading || !chapters.length || sourceId === LOCAL_SOURCE_ID) return;
+    const src = sources.find((s) => s.bookSourceUrl === sourceId);
+    if (!src) return;
+    let cancel = false;
+    (async () => {
+      for (let i = 1; i <= 5; i++) {
+        const t = index + i;
+        if (cancel) return;
+        if (t >= chapters.length) return;
+        if (prefetchingRef.current.has(t)) continue;
+        if (await hasChapter(currentKey, t)) continue;
+        prefetchingRef.current.add(t);
+        try {
+          const r = await getContent(src, chapters[t].url);
+          if (r.content) await saveChapter(currentKey, t, r.content);
+        } catch {
+          /* 预取失败无所谓，翻到那儿再拉 */
+        } finally {
+          prefetchingRef.current.delete(t);
+        }
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, chapters.length, loading, sourceId, currentKey]);
+
+  const [cacheJob, setCacheJob] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+  const cacheCancelRef = useRef(false);
+
+  const startCache = (count: number) => {
+    if (cacheJob) return;
+    if (!chapters.length) return;
+    const n = count < 0 ? chapters.length : Math.min(chapters.length, count);
+    // 几百章要跑挺久，先说清楚，别让人以为卡住了
+    if (n > 200) {
+      Alert.alert(
+        '缓存章节',
+        `将缓存 ${n} 章，需要一段时间，期间请保持 App 在前台，可以随时取消。`,
+        [
+          { text: '取消', style: 'cancel' },
+          { text: '开始', onPress: () => runCache(count) },
+        ]
+      );
+      return;
+    }
+    runCache(count);
+  };
+
+  const runCache = async (count: number) => {
+    const src = sources.find((s) => s.bookSourceUrl === sourceId);
+    if (!src || !chapters.length) return;
+    const total = count < 0 ? chapters.length : Math.min(chapters.length, count);
+    cacheCancelRef.current = false;
+    setCacheJob({ done: 0, total });
+    let done = 0;
+    for (let i = 0; i < total; i++) {
+      if (cacheCancelRef.current) break;
+      if (!(await hasChapter(currentKey, i))) {
+        try {
+          const r = await getContent(src, chapters[i].url);
+          if (r.content) await saveChapter(currentKey, i, r.content);
+        } catch {
+          /* 单章失败跳过 */
+        }
+      }
+      done = i + 1;
+      setCacheJob({ done, total });
+    }
+    setCacheJob(null);
+    Alert.alert(
+      cacheCancelRef.current ? '已取消' : '缓存完成',
+      `本次处理 ${done} 章。之后读这些章不用再联网。`
+    );
+  };
+
+  const clearCache = () => {
+    if (cacheJob) return;
+    Alert.alert('清空正文缓存', '只删本书已缓存的正文，不影响目录和书架。', [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '清空',
+        style: 'destructive',
+        onPress: async () => {
+          await clearBookChapters(currentKey, chapters.length);
+          Alert.alert('已清空', '这本书的正文缓存已经删掉了。');
+        },
+      },
+    ]);
   };
 
   // 手动刷新目录：把缓存时间戳清掉，再踢一次 effect 走网络
@@ -1017,6 +1156,49 @@ export function ReaderScreen() {
               </View>
               <Text style={styles.switchGo}>刷新</Text>
             </TouchableOpacity>
+
+            <View style={styles.switchRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.menuLabel}>缓存正文</Text>
+                <Text style={styles.switchSub} numberOfLines={1}>
+                  {cacheJob
+                    ? `缓存中 ${cacheJob.done}/${cacheJob.total} 章`
+                    : '阅读时自动缓存后 5 章，翻页不用等'}
+                </Text>
+              </View>
+              {cacheJob ? (
+                <TouchableOpacity
+                  onPress={() => {
+                    cacheCancelRef.current = true;
+                  }}
+                >
+                  <Text style={styles.cacheCancel}>取消</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            <View style={styles.cacheRow}>
+              {[
+                { label: '50 章', n: 50 },
+                { label: '100 章', n: 100 },
+                { label: '全部', n: -1 },
+              ].map((it) => (
+                <TouchableOpacity
+                  key={it.label}
+                  style={[styles.cacheBtn, cacheJob && { opacity: 0.4 }]}
+                  disabled={!!cacheJob}
+                  onPress={() => startCache(it.n)}
+                >
+                  <Text style={styles.cacheBtnText}>{it.label}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={[styles.cacheBtnGhost, cacheJob && { opacity: 0.4 }]}
+                disabled={!!cacheJob}
+                onPress={clearCache}
+              >
+                <Text style={styles.cacheBtnGhostText}>清空</Text>
+              </TouchableOpacity>
+            </View>
 
             <TouchableOpacity style={styles.switchRow} onPress={toggleShelf}>
               <View style={{ flex: 1 }}>
