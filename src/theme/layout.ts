@@ -8,8 +8,8 @@
  */
 
 export const PAGE_PAD_H = 20; // 左右内边距
-export const PAGE_PAD_TOP = 16; // 正文上留白
-export const PAGE_PAD_BOTTOM = 16; // 正文下留白
+export const PAGE_PAD_TOP = 6; // 正文上留白（压到很小，让正文尽量贴近顶栏）
+export const PAGE_PAD_BOTTOM = 6; // 正文下留白（同上，底部尽量贴近工具栏）
 
 /** 可排印宽度：容器宽减去左右内边距 */
 export function pageTextWidth(areaW: number): number {
