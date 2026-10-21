@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { View, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, FlatList, Alert, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import * as Battery from 'expo-battery';
 import { bookKey, useStore } from '../store/useStore';
 import { getBookInfo, getContent, getToc } from '../engine/SourceEngine';
 import { BookChapter } from '../engine/types';
@@ -20,11 +21,13 @@ import { SearchBook } from '../engine/types';
 import { matchChapterIndex } from '../utils/bookMatch';
 import { useAppFont } from '../components/AppText';
 import {
-  pageTextHeight,
-  pageTextWidth,
+  PAGE_FOOTER_H,
+  PAGE_HEADER_H,
   PAGE_PAD_BOTTOM,
   PAGE_PAD_H,
   PAGE_PAD_TOP,
+  pageTextHeight,
+  pageTextWidth,
 } from '../theme/layout';
 import { Text } from '../components/AppText';
 
@@ -104,6 +107,14 @@ const styles = StyleSheet.create({
   },
   switchSub: { color: APP.sub, fontSize: 11, marginTop: 3 },
   switchGo: { color: APP.accent, fontSize: 14, fontWeight: '700' },
+  presetBtn: {
+    backgroundColor: APP.accent,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  presetText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   switchPill: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -115,6 +126,30 @@ const styles = StyleSheet.create({
   switchPillOn: { backgroundColor: APP.accent, borderColor: APP.accent },
   switchPillText: { color: APP.sub, fontSize: 13, fontWeight: '600' },
   switchPillTextOn: { color: '#fff' },
+  pageHeader: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: PAGE_HEADER_H,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: PAGE_PAD_H,
+  },
+  pageFooter: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: PAGE_FOOTER_H,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: PAGE_PAD_H,
+  },
+  pageMeta: { fontSize: 10.5, flexShrink: 1 },
+  pageMetaRight: { marginLeft: 12, textAlign: 'right' },
   themes: { flexDirection: 'row' },
   themeDot: {
     width: 30,
@@ -232,6 +267,31 @@ export function ReaderScreen() {
   >([]);
   // 手动刷新目录时 +1，用来强制重新走一次加载
   const [tocTick, setTocTick] = useState(0);
+
+  // 页脚右下角的电量
+  const [battery, setBattery] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    Battery.getBatteryLevelAsync()
+      .then((v) => {
+        if (alive) setBattery(v);
+      })
+      .catch(() => {});
+    let sub: any = null;
+    try {
+      sub = Battery.addBatteryLevelListener(({ batteryLevel }) => setBattery(batteryLevel));
+    } catch {
+      /* 个别环境不支持订阅，静态读一次就够 */
+    }
+    return () => {
+      alive = false;
+      try {
+        sub && sub.remove();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
   const appFont = useAppFont();
 
   // zustand 的持久化是异步的（AsyncStorage）。首帧 shelf 还是空数组，
@@ -691,6 +751,7 @@ export function ReaderScreen() {
             }}
           >
             {area.w > 0 ? (
+              <>
               <PageCurlView
                 pages={pages}
                 /* 排版测量回来后页数可能变少（每页能装的行数和估算不同），
@@ -712,6 +773,46 @@ export function ReaderScreen() {
                 onTapRight={handleNext}
                 onTapCenter={toggleBars}
               />
+              {/* 页眉：左章节名、右书名。固定在每页顶部，不随翻页移动 */}
+              <View
+                style={[styles.pageHeader, { backgroundColor: theme.bg }]}
+                pointerEvents="none"
+              >
+                <Text
+                  style={[styles.pageMeta, { color: theme.sub }]}
+                  numberOfLines={1}
+                >
+                  {curChapter?.name || ''}
+                </Text>
+                <Text
+                  style={[styles.pageMeta, styles.pageMetaRight, { color: theme.sub }]}
+                  numberOfLines={1}
+                >
+                  {name}
+                </Text>
+              </View>
+              {/* 页脚：左「本章第几页 · 全书进度」、右电量 */}
+              <View
+                style={[styles.pageFooter, { backgroundColor: theme.bg }]}
+                pointerEvents="none"
+              >
+                <Text style={[styles.pageMeta, { color: theme.sub }]}>
+                  {pages.length ? `${pageIndex + 1}/${pages.length}` : ''}
+                  {chapters.length
+                    ? ` · 全书 ${(
+                        ((index + (pages.length ? (pageIndex + 1) / pages.length : 0)) /
+                          chapters.length) *
+                        100
+                      ).toFixed(1)}%`
+                    : ''}
+                </Text>
+                <Text
+                  style={[styles.pageMeta, styles.pageMetaRight, { color: theme.sub }]}
+                >
+                  {battery == null ? '' : `${Math.round(battery * 100)}%`}
+                </Text>
+              </View>
+              </>
             ) : (
               <View style={styles.center}>
                 <ActivityIndicator color={theme.sub} />
@@ -882,7 +983,20 @@ export function ReaderScreen() {
               </Text>
             </TouchableOpacity>
             <View style={styles.row}>
-              <Text style={styles.menuLabel}>字号</Text>
+              <TouchableOpacity
+                style={styles.presetBtn}
+                onPress={() =>
+                  updateSettings({
+                    fontSize: 18,
+                    lineHeight: 1.6,
+                    paraIndent: true,
+                    paraGap: 0,
+                  })
+                }
+              >
+                <Text style={styles.presetText}>推荐排版（18 号 · 1.6 行距）</Text>
+              </TouchableOpacity>
+              <Text style={[styles.menuLabel, { marginTop: 10 }]}>字号</Text>
               <View style={styles.stepper}>
                 <TouchableOpacity
                   style={styles.step}

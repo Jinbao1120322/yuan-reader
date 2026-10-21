@@ -7,7 +7,14 @@
  * 以后改排版只改这里。
  */
 
-export const PAGE_PAD_H = 20; // 左右内边距
+export const PAGE_PAD_H = 18; // 左右内边距
+
+/*
+ * 页眉 / 页脚（阅读界面顶部那行「章节名 · 书名」和底部那行「进度 · 电量」）
+ * 按目标机 iPhone Air（420×912pt）算：22pt 刚好放一行 10.5pt 的小字，不挤。
+ */
+export const PAGE_HEADER_H = 22;
+export const PAGE_FOOTER_H = 22;
 export const PAGE_PAD_TOP = 6; // 正文上留白（压到很小，让正文尽量贴近顶栏）
 export const PAGE_PAD_BOTTOM = 6; // 正文下留白（同上，底部尽量贴近工具栏）
 
@@ -16,7 +23,10 @@ export function pageTextWidth(areaW: number): number {
   return Math.max(1, areaW - PAGE_PAD_H * 2);
 }
 
-/** 可排印高度：容器高减去上下留白 */
+/** 可排印高度：容器高减去页眉、页脚和上下留白 */
 export function pageTextHeight(areaH: number): number {
-  return Math.max(1, areaH - PAGE_PAD_TOP - PAGE_PAD_BOTTOM);
+  return Math.max(
+    1,
+    areaH - PAGE_HEADER_H - PAGE_FOOTER_H - PAGE_PAD_TOP - PAGE_PAD_BOTTOM
+  );
 }

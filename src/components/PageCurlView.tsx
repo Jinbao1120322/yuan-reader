@@ -1,7 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, StyleSheet, Animated, PanResponder } from 'react-native';
 import { ReaderTheme } from '../theme/theme';
-import { PAGE_PAD_BOTTOM, PAGE_PAD_H, PAGE_PAD_TOP } from '../theme/layout';
+import {
+  PAGE_FOOTER_H,
+  PAGE_HEADER_H,
+  PAGE_PAD_BOTTOM,
+  PAGE_PAD_H,
+  PAGE_PAD_TOP,
+} from '../theme/layout';
 import { Text } from './AppText';
 
 // 卷曲段切片数。这一段在纸面上只有 πR/2 ≈ 93pt 宽，12 片足够看出圆弧，
@@ -441,11 +447,12 @@ const styles = StyleSheet.create({
   container: { position: 'relative', overflow: 'hidden' },
   layer: { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%' },
   page: {
-    // 必须和 paginate 的入参用同一套常量，否则分页算出来的行数和实际渲染对不上，
+    // 必须和 pageTextHeight 用同一套常量，否则分页算出来的行数和实际渲染对不上，
     // 就会出现「最后一行被裁半个字」和「底部空一块」
     paddingHorizontal: PAGE_PAD_H,
-    paddingTop: PAGE_PAD_TOP,
-    paddingBottom: PAGE_PAD_BOTTOM,
+    // 顶部要让出页眉那一行（章节名 / 书名），正文从页眉下面开始
+    paddingTop: PAGE_PAD_TOP + PAGE_HEADER_H,
+    paddingBottom: PAGE_PAD_BOTTOM + PAGE_FOOTER_H,
   },
   pageText: { textAlign: 'left' },
   flat: { position: 'absolute', left: 0, top: 0, overflow: 'hidden' },
