@@ -1270,7 +1270,10 @@ export function ReaderScreen() {
                 headerH={metaHeaderH}
                 footerH={metaFooterH}
                 images={pageImages}
-                onLongPress={openFilterSheet}
+                onLongPress={() => {
+                  // 长按正文 = 进入选取状态，选中文字后自动弹过滤面板
+                  setSelectMode(true);
+                }}
                 onTapLeft={handlePrevPage}
                 onTapRight={handleNextPage}
                 onTapCenter={toggleBars}
@@ -1291,8 +1294,13 @@ export function ReaderScreen() {
                 >
                   <TextInput
                     multiline
-                    editable
-                    showSoftInputOnFocus={false}
+                    /*
+                     * editable={false} 是关键：
+                     * iOS 的 UITextView 里 isEditable 和 isSelectable 是两回事，
+                     * 关掉 editable 只是不能改内容，**选中仍然有效**，而且不会弹键盘。
+                     * 之前用 editable + showSoftInputOnFocus={false}，键盘挡住了但选择也一起失效了。
+                     */
+                    editable={false}
                     scrollEnabled
                     value={pages[Math.min(pageIndex, Math.max(0, pages.length - 1))] || ''}
                     onSelectionChange={(e) => {
@@ -1336,14 +1344,34 @@ export function ReaderScreen() {
                       position: 'absolute',
                       left: 0,
                       right: 0,
-                      bottom: 14,
+                      bottom: 56,
                       textAlign: 'center',
                       color: APP.sub,
                       fontSize: 12,
                     }}
                   >
-                    长按选中要过滤的文字，选中即弹出过滤面板
+                    长按选中要过滤的文字，松手即弹出过滤面板
                   </Text>
+                  {/* 兜底：万一系统选择不好使，复制后从这里进 */}
+                  <TouchableOpacity
+                    onPress={openFilterSheet}
+                    style={{
+                      position: 'absolute',
+                      left: 24,
+                      right: 24,
+                      bottom: 14,
+                      paddingVertical: 10,
+                      borderRadius: 10,
+                      backgroundColor: APP.card,
+                      borderWidth: 1,
+                      borderColor: APP.border,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ color: APP.text, fontSize: 13 }}>
+                      选不中？复制那段文字后点这里
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               ) : null}
               </>
