@@ -593,11 +593,26 @@ export function PageCurlView(props: Props) {
     );
   }
 
+  /* 临时诊断（定位完就删）：i=当前页 b=翻页基准 f=是否翻页中 */
+  const DBG = { i: index, b: flipBase, f: flipping ? 1 : 0 };
+
   return (
     <GestureDetector gesture={gesture}>
       <View
         style={[styles.container, { width: areaW, height: areaH, backgroundColor: theme.bg }]}
       >
+      <Text
+        style={{
+          position: 'absolute',
+          right: 6,
+          top: 2,
+          zIndex: 99,
+          fontSize: 9,
+          color: 'rgba(0,0,0,0.45)',
+        }}
+      >
+        {`i${DBG.i} b${DBG.b} f${DBG.f} n${pages.length}`}
+      </Text>
       {/*
        * 预渲染「上一页」（完全透明，看不见但参与布局）。
        * 为什么需要它：静止时只渲染了当前页和下一页，往回翻的那一页是**第一次**上屏，
