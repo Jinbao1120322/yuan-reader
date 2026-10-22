@@ -341,7 +341,8 @@ export function ReaderScreen() {
   const displayText = useMemo(
     () =>
       typeset(content, {
-        indent: settings.paraIndent !== false,
+        // 设置里的「段首缩进」已删，固定为缩进（靠缩进区分段落，不留空行）
+        indent: true,
         paraGap: settings.paraGap ?? 0,
       }),
     [content, settings.paraIndent, settings.paraGap]
@@ -798,7 +799,6 @@ export function ReaderScreen() {
       clearTimeout(timer);
     };
   }, [shotTarget, area.w, area.h]);
-
 
   // 章节内容/排版变化后，按 pending 定位当前页（翻章时跳到首/末页），并持久化进度
   useEffect(() => {
@@ -1291,7 +1291,14 @@ export function ReaderScreen() {
                 <View
                   style={[
                     StyleSheet.absoluteFill,
-                    { backgroundColor: theme.bg, zIndex: 30 },
+                    {
+                      backgroundColor: theme.bg,
+                      zIndex: 30,
+                      // 必须让出状态栏：正常阅读的正文是从安全区顶部开始的，
+                      // 覆盖层如果从屏幕 0 开始，整页会往上偏 59pt，
+                      // 底部还会多出一大块空白（底部条就悬在半空）。
+                      paddingTop: insets.top,
+                    },
                   ]}
                 >
                   <SelectablePage
@@ -1573,38 +1580,7 @@ export function ReaderScreen() {
               <Text style={styles.switchGo}>切换</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.switchRow} onPress={refreshToc}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuLabel}>刷新目录</Text>
-                <Text style={styles.switchSub} numberOfLines={1}>
-                  {shelfBook
-                    ? '书架里的书会缓存目录，书更新了点这里拉最新'
-                    : '加入书架后才会缓存目录'}
-                </Text>
-              </View>
-              <Text style={styles.switchGo}>刷新</Text>
-            </TouchableOpacity>
-
-            <View style={styles.switchRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuLabel}>缓存正文</Text>
-                <Text style={styles.switchSub} numberOfLines={1}>
-                  {cacheJob
-                    ? `缓存中 ${cacheJob.done}/${cacheJob.total} 章`
-                    : '阅读时自动缓存后 5 章，翻页不用等'}
-                </Text>
-              </View>
-              {cacheJob ? (
-                <TouchableOpacity
-                  onPress={() => {
-                    cacheCancelRef.current = true;
-                  }}
-                >
-                  <Text style={styles.cacheCancel}>取消</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-            <View style={styles.cacheRow}>
+                        <View style={styles.cacheRow}>
               {[
                 { label: '50 章', n: 50 },
                 { label: '100 章', n: 100 },
@@ -1718,28 +1694,7 @@ export function ReaderScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-            <View style={styles.row}>
-              <Text style={styles.menuLabel}>段首缩进</Text>
-              <TouchableOpacity
-                style={[
-                  styles.switchPill,
-                  settings.paraIndent !== false && styles.switchPillOn,
-                ]}
-                onPress={() =>
-                  updateSettings({ paraIndent: settings.paraIndent === false })
-                }
-              >
-                <Text
-                  style={[
-                    styles.switchPillText,
-                    settings.paraIndent !== false && styles.switchPillTextOn,
-                  ]}
-                >
-                  {settings.paraIndent !== false ? '两字缩进' : '顶格'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.row}>
+                        <View style={styles.row}>
               <Text style={styles.menuLabel}>主题</Text>
               <View style={styles.themes}>
                 {THEME_KEYS.map((k) => (
@@ -1783,39 +1738,8 @@ export function ReaderScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-            <View style={styles.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuLabel}>过滤文字</Text>
-                <Text style={styles.switchSub} numberOfLines={1}>
-                  已有 {settings.replaceRules.length} 条规则 · 也可在下方开启选取净化
-                </Text>
-              </View>
-              <TouchableOpacity onPress={openFilterSheet}>
-                <Text style={{ color: APP.accent, fontSize: 13, fontWeight: '700' }}>
-                  添加
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuLabel}>选取净化</Text>
-                <Text style={styles.switchSub} numberOfLines={1}>
-                  正文变可选，长按选中文字直接加过滤
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => {
-                  setMenuOpen(false);
-                  setTimeout(() => setSelectMode(true), 220);
-                }}
-              >
-                <Text style={{ color: APP.accent, fontSize: 13, fontWeight: '700' }}>
-                  开始
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.row}>
+            
+                        <View style={styles.row}>
               <Text style={styles.menuLabel}>翻页模式</Text>
               <TouchableOpacity
                 onPress={() => {

@@ -319,9 +319,11 @@ export function SelectablePage(props: Props) {
           <Text style={styles.preview} numberOfLines={1}>
             {hasSelection ? selectedText.trim() : '按住正文拖动选字'}
           </Text>
-          <Text style={styles.previewSub} numberOfLines={1}>
-            {hasSelection ? `已选 ${selectedText.trim().length} 字` : '选中后可净化或替换'}
-          </Text>
+          {hasSelection ? (
+            <Text style={styles.previewSub} numberOfLines={1}>
+              已选 {selectedText.trim().length} 字
+            </Text>
+          ) : null}
         </View>
         {hasSelection ? (
           <>
@@ -415,24 +417,24 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 10,
     right: 10,
-    bottom: 10,
+    bottom: 6,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(28,28,30,0.96)',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
-  preview: { color: '#fff', fontSize: 13, fontWeight: '500' },
-  previewSub: { color: '#8e8e93', fontSize: 11, marginTop: 2 },
+  preview: { color: '#fff', fontSize: 12, fontWeight: '500' },
+  previewSub: { color: '#8e8e93', fontSize: 10, marginTop: 1 },
   barBtn: {
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginLeft: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 7,
+    marginLeft: 5,
     backgroundColor: 'rgba(255,255,255,0.12)',
   },
   barBtnSolid: { backgroundColor: '#0a84ff' },
   barBtnGhost: { backgroundColor: 'transparent' },
-  barBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  barBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
 });
