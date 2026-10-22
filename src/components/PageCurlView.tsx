@@ -219,6 +219,17 @@ export function PageCurlView(props: Props) {
 
   const grantX = useSharedValue(0);
   const [dir, setDir] = useState<'next' | 'prev'>('next');
+  /*
+   * 是否"正在翻"。
+   * false = 静止：直接渲染单页（pages[index]），不走卷页那套。
+   *
+   * 为什么必须区分：
+   * 翻页动画结束的瞬间，index 已经 +1 但 dragX 还是终点值（纸面卷走、宽度 0），
+   * 而此时底层算的是 pages[index+1] —— 于是那一帧露出的是**再下一页**的内容，
+   * 用户就看到"先闪一下下下页，再跳回来"。
+   * 静止态绕开卷页结构，这个窗口就不存在了。
+   */
+  const [flipping, setFlipping] = useState(false);
 
   useEffect(() => {
     animatingSV.value = false;
@@ -346,6 +357,7 @@ export function PageCurlView(props: Props) {
       // 否则渲染的还是错误方向的页面组合。
       dirSV.value = d === 'next' ? 0 : 1;
       runOnJS(setDir)(d);
+      runOnJS(setFlipping)(true);
       animatingSV.value = true;
       dragX.value = withTiming(d === 'next' ? -AW : AW, { duration: 280 }, (fin) => {
         if (fin) {
@@ -360,8 +372,11 @@ export function PageCurlView(props: Props) {
     const springBack = () => {
       'worklet';
       dragX.value = withSpring(0, { damping: 24, stiffness: 320, mass: 0.6 }, (fin) => {
-        // 回弹到位、回到静止，方向也要归位，否则又变成纯色空屏
-        if (fin) runOnJS(setDir)('next');
+        // 回弹到位、回到静止：方向归位 + 退出翻页态（回到单页渲染）
+        if (fin) {
+          runOnJS(setDir)('next');
+          runOnJS(setFlipping)(false);
+        }
       });
     };
 
@@ -404,6 +419,7 @@ export function PageCurlView(props: Props) {
       .activeOffsetX([-24, 24])
       .failOffsetY([-40, 40])
       .onBegin((e) => {
+        runOnJS(setFlipping)(true);
         'worklet';
         grantX.value = e.x;
         if (!animatingSV.value) dragX.value = 0;
@@ -501,6 +517,32 @@ export function PageCurlView(props: Props) {
   const underIdx = dir === 'next' ? index + 1 : index;
   const underText = dir === 'next' ? pages[index + 1] ?? '' : pages[index] ?? '';
   const slideUnder = dir === 'next' ? pages[index + 1] ?? '' : pages[index - 1] ?? '';
+
+  /*
+   * 静止态：只画当前页。
+   * 同时把相邻两页挂在完全透明的层里（看不见，但会被排版并缓存），
+   * 这样一翻页就能直接复用，不会出现"新页首次排版"的空白。
+   */
+  if (!flipping) {
+    return (
+      <GestureDetector gesture={gesture}>
+        <View
+          style={[styles.container, { width: areaW, height: areaH, backgroundColor: theme.bg }]}
+        >
+          <View
+            style={[styles.layer, { zIndex: 0, opacity: 0 }]}
+            pointerEvents="none"
+          >
+            {index > 0 && pages[index - 1] ? pageBody(pages[index - 1], index - 1) : null}
+            {pages[index + 1] ? pageBody(pages[index + 1], index + 1) : null}
+          </View>
+          <View style={[styles.layer, { zIndex: 1 }]} pointerEvents="none">
+            {pageBody(pages[index] ?? '', index)}
+          </View>
+        </View>
+      </GestureDetector>
+    );
+  }
 
   if (mode === 'slide') {
     return (
