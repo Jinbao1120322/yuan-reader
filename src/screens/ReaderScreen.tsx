@@ -11,6 +11,7 @@ import {
   Alert,
   Animated,
   TextInput,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -36,6 +37,7 @@ import { trimPageEdges, typeset } from '../utils/typeset';
 import { hasVisibleText } from '../utils/text';
 import { captureRef } from 'react-native-view-shot';
 import * as Clipboard from 'expo-clipboard';
+import { SelectablePage } from '../components/SelectablePage';
 import {
   clearBookChapters,
   countCached,
@@ -1292,35 +1294,28 @@ export function ReaderScreen() {
                     { backgroundColor: theme.bg, zIndex: 30 },
                   ]}
                 >
-                  <TextInput
-                    multiline
-                    /*
-                     * editable={false} 是关键：
-                     * iOS 的 UITextView 里 isEditable 和 isSelectable 是两回事，
-                     * 关掉 editable 只是不能改内容，**选中仍然有效**，而且不会弹键盘。
-                     * 之前用 editable + showSoftInputOnFocus={false}，键盘挡住了但选择也一起失效了。
-                     */
-                    editable={false}
-                    scrollEnabled
-                    value={pages[Math.min(pageIndex, Math.max(0, pages.length - 1))] || ''}
-                    onSelectionChange={(e) => {
-                      const { start, end } = e.nativeEvent.selection;
-                      if (end - start < 1) return;
-                      const sel = (pages[pageIndex] || '').slice(start, end).trim();
-                      if (!sel) return;
+                  <SelectablePage
+                    text={pages[Math.min(pageIndex, Math.max(0, pages.length - 1))] || ''}
+                    width={area.w}
+                    height={area.h}
+                    fontSize={settings.fontSize}
+                    lineHeight={settings.lineHeight}
+                    color={theme.text}
+                    bg={theme.bg}
+                    padTop={PAGE_PAD_TOP + metaHeaderH}
+                    padBottom={PAGE_PAD_BOTTOM + metaFooterH}
+                    padH={PAGE_PAD_H}
+                    onAction={(sel, action) => {
+                      if (action === 'copy') {
+                        Clipboard.setStringAsync(sel).catch(() => {});
+                        setSelectMode(false);
+                        return;
+                      }
+                      // 净化：把选中的字填进过滤面板
                       setFilterDraft(sel);
                       setFilterReplace('');
                       setSelectMode(false);
                       setFilterOpen(true);
-                    }}
-                    style={{
-                      flex: 1,
-                      color: theme.text,
-                      fontSize: settings.fontSize,
-                      lineHeight: settings.fontSize * settings.lineHeight,
-                      paddingHorizontal: PAGE_PAD_H,
-                      paddingTop: PAGE_PAD_TOP,
-                      paddingBottom: PAGE_PAD_BOTTOM,
                     }}
                   />
                   <TouchableOpacity
@@ -1338,39 +1333,6 @@ export function ReaderScreen() {
                     }}
                   >
                     <Text style={{ color: APP.text, fontSize: 13 }}>退出选取</Text>
-                  </TouchableOpacity>
-                  <Text
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      right: 0,
-                      bottom: 56,
-                      textAlign: 'center',
-                      color: APP.sub,
-                      fontSize: 12,
-                    }}
-                  >
-                    长按选中要过滤的文字，松手即弹出过滤面板
-                  </Text>
-                  {/* 兜底：万一系统选择不好使，复制后从这里进 */}
-                  <TouchableOpacity
-                    onPress={openFilterSheet}
-                    style={{
-                      position: 'absolute',
-                      left: 24,
-                      right: 24,
-                      bottom: 14,
-                      paddingVertical: 10,
-                      borderRadius: 10,
-                      backgroundColor: APP.card,
-                      borderWidth: 1,
-                      borderColor: APP.border,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <Text style={{ color: APP.text, fontSize: 13 }}>
-                      选不中？复制那段文字后点这里
-                    </Text>
                   </TouchableOpacity>
                 </View>
               ) : null}
