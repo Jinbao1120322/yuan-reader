@@ -21,7 +21,7 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, AppRegistry } from 'react-native';
 
-const BOOT_TAG = 'v1.0.55';
+const BOOT_TAG = 'v1.0.56';
 
 function describeError(e) {
   if (!e) return '未知错误（throw 了空值）';
@@ -32,7 +32,7 @@ function describeError(e) {
 }
 
 // 每个 App 构建都会修改这个值，用来确认用户装的是哪一版
-const BUILD_STAMP = '1.0.55.56';
+const BUILD_STAMP = '1.0.56.57';
 
 // ---------------------------------------------------------------------------
 // 1. 加载期保护：require('./App') 失败也不至于白屏

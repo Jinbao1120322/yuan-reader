@@ -378,13 +378,24 @@ export function PageCurlView(props: Props) {
 
   const gesture = useMemo(() => {
     // 全部 'worklet'：手势判定 + 动画都在 UI 线程跑，JS 线程再忙也不掉帧
+    /*
+     * worklet 捕获外部变量是「快照」不是引用 ——
+     * 之前直接写 runOnJS(setFlipBase)(latest.current.index)，
+     * 那个 index 在手势创建时就被拍死了（永远是当时的页号，比如第 1 页），
+     * 于是翻页时底下垫的永远是 pages[2]（第二页）。
+     * 改成把「读取」这件事也丢回 JS 线程做，ref 在那里才是实时的。
+     */
+    const syncFlipBase = () => {
+      setFlipBase(latest.current.index);
+    };
+
     const flip = (d: 'next' | 'prev') => {
       'worklet';
       // 点击翻页不经过 onUpdate，这里必须自己把方向切过去，
       // 否则渲染的还是错误方向的页面组合。
       dirSV.value = d === 'next' ? 0 : 1;
       runOnJS(setDir)(d);
-      runOnJS(setFlipBase)(latest.current.index);
+      runOnJS(syncFlipBase)();
       runOnJS(setFlipping)(true);
       animatingSV.value = true;
       dragX.value = withTiming(d === 'next' ? -AW : AW, { duration: 280 }, (fin) => {
@@ -447,7 +458,7 @@ export function PageCurlView(props: Props) {
       .activeOffsetX([-24, 24])
       .failOffsetY([-40, 40])
       .onBegin((e) => {
-        runOnJS(setFlipBase)(latest.current.index);
+        runOnJS(syncFlipBase)();
         runOnJS(setFlipping)(true);
         'worklet';
         grantX.value = e.x;
