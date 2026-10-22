@@ -367,13 +367,11 @@ export function ReaderScreen() {
    * 这两个值会同时作用于「可排印高度」和「页面内边距」，所以只改这里就够。
    */
   const lineH = settings.fontSize * settings.lineHeight;
-  /*
-   * 顶部留白固定 1.5 行（设置项已按用户要求移除）。
-   * 之前做成可调，但实测调整后正文位置几乎没变——查不出是存档值没写进去
-   * 还是重排链路有问题，用户要求直接删掉这个入口，固定一个合适的值。
-   */
-  const metaHeaderH = lineH * 1.5;
-  const metaFooterH = lineH * Math.max(0, settings.bottomGapLines ?? 0);
+  // 顶部 / 底部留白都以「行」为单位，步进 0.2
+  const topGap = Math.max(0, Math.min(5, settings.topGapLines ?? 1.5));
+  const bottomGap = Math.max(0, Math.min(5, settings.bottomGapLines ?? 0));
+  const metaHeaderH = lineH * topGap;
+  const metaFooterH = lineH * bottomGap;
 
   // zustand 的持久化是异步的（AsyncStorage）。首帧 shelf 还是空数组，
   // 这时候去找"有没有缓存目录"必然找不到 → 白白重拉一次。
@@ -396,7 +394,14 @@ export function ReaderScreen() {
       if (typeof un === 'function') un();
     };
   }, []);
-  const pendingPageIndex = useRef<number | null>(null); // -1 表示定位到本章末页
+  /*
+   * 跳页意图。**必须带目标章节**：
+   * 之前只存页码，而 effect 的依赖里有 index —— index 一变就立刻消费，
+   * 但那时 pages 还是上一章的，页码被套到错的章上、意图随即被清空，
+   * 等新章真正加载完就没人管了 → 于是永远停在新章第一页。
+   * page = -1 表示"目标章最后一页"。
+   */
+  const navTarget = useRef<{ ch: number; page: number } | null>(null);
   // 滚动模式：保存的阅读进度是 0~1000 的百分比，首次进入时恢复到该位置
   const scrollRestoreFrac = useRef<number | null>(
     isPaged ? null : Math.min((routePageIndex || 0) / 1000, 1)
@@ -816,7 +821,7 @@ export function ReaderScreen() {
     const ci = Math.min(shelfBook.lastChapterIndex ?? 0, chapters.length - 1);
     if (ci > 0) setIndex(ci);
     if ((shelfBook.lastReadPos ?? 0) > 0) {
-      pendingPageIndex.current = shelfBook.lastReadPos;
+      navTarget.current = { ch: ci, page: shelfBook.lastReadPos };
     }
   }, [shelfBook, chapters.length]);
 
@@ -827,19 +832,20 @@ export function ReaderScreen() {
    * 等于进书那一刻就把进度改写成 0（pageIndex 初值就是 0），把存的位置冲掉了。
    */
   useEffect(() => {
-    if (!pages.length) return;
-    if (pendingPageIndex.current === null) return;
-    const want =
-      pendingPageIndex.current === -1 ? pages.length - 1 : pendingPageIndex.current;
-    pendingPageIndex.current = null;
-    const t = Math.min(Math.max(want, 0), Math.max(0, pages.length - 1));
-    setPageIndex(t);
-    updateProgress(bookUrl, sourceId, index, t);
+    const t = navTarget.current;
+    if (!t || !pages.length) return;
+    // 章节还没切到目标章 → 这次 pages 是别的章的，等下一次
+    if (t.ch !== index) return;
+    navTarget.current = null;
+    const want = t.page === -1 ? pages.length - 1 : t.page;
+    const pos = Math.min(Math.max(want, 0), Math.max(0, pages.length - 1));
+    setPageIndex(pos);
+    updateProgress(bookUrl, sourceId, index, pos);
   }, [pages, index, bookUrl, sourceId, updateProgress]);
 
   const goPrev = () => {
     if (index > 0) {
-      pendingPageIndex.current = 0;
+      navTarget.current = { ch: index - 1, page: 0 };
       setPageIndex(0);
       setIndex(index - 1);
     }
@@ -848,7 +854,7 @@ export function ReaderScreen() {
   // 会停在上一章看到一半的页码上（比如第 5 页），看起来就不是"开头"。
   const goNext = () => {
     if (index < chapters.length - 1) {
-      pendingPageIndex.current = 0;
+      navTarget.current = { ch: index + 1, page: 0 };
       setPageIndex(0);
       setIndex(index + 1);
     }
@@ -1054,7 +1060,7 @@ export function ReaderScreen() {
       return;
     }
     if (index > 0) {
-      pendingPageIndex.current = -1; // 跳到上一章末页
+      navTarget.current = { ch: index - 1, page: -1 }; // 跳到上一章末页
       setIndex(index - 1);
     }
   };
@@ -1068,7 +1074,7 @@ export function ReaderScreen() {
       return;
     }
     if (index < chapters.length - 1) {
-      pendingPageIndex.current = 0; // 跳到下一章首页
+      navTarget.current = { ch: index + 1, page: 0 }; // 跳到下一章首页
       setIndex(index + 1);
     }
   };
@@ -1513,7 +1519,7 @@ export function ReaderScreen() {
                     item.index === index && styles.chActive,
                   ]}
                   onPress={() => {
-                    pendingPageIndex.current = 0; // 跳到目标章首页
+                    navTarget.current = { ch: item.index, page: 0 }; // 跳到目标章首页
                     setIndex(item.index);
                     setTocOpen(false);
                   }}
@@ -1750,26 +1756,66 @@ export function ReaderScreen() {
               </View>
             </View>
             <View style={styles.row}>
-              <Text style={styles.menuLabel}>底部留白</Text>
+              <Text style={styles.menuLabel}>顶部留白</Text>
               <View style={styles.stepper}>
                 <TouchableOpacity
                   style={styles.step}
                   onPress={() =>
                     updateSettings({
-                      bottomGapLines: Math.max(0, (settings.bottomGapLines ?? 0) - 1),
+                      topGapLines: Math.max(
+                        0,
+                        +((settings.topGapLines ?? 1.5) - 0.2).toFixed(1)
+                      ),
                     })
                   }
                 >
                   <Text style={styles.stepText}>－</Text>
                 </TouchableOpacity>
                 <Text style={[styles.menuVal, { color: APP.text }]}>
-                  {settings.bottomGapLines ?? 0} 行
+                  {(settings.topGapLines ?? 1.5).toFixed(1)} 行
                 </Text>
                 <TouchableOpacity
                   style={styles.step}
                   onPress={() =>
                     updateSettings({
-                      bottomGapLines: Math.min(5, (settings.bottomGapLines ?? 0) + 1),
+                      topGapLines: Math.min(
+                        5,
+                        +((settings.topGapLines ?? 1.5) + 0.2).toFixed(1)
+                      ),
+                    })
+                  }
+                >
+                  <Text style={styles.stepText}>＋</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={styles.row}>
+              <Text style={styles.menuLabel}>底部留白</Text>
+              <View style={styles.stepper}>
+                <TouchableOpacity
+                  style={styles.step}
+                  onPress={() =>
+                    updateSettings({
+                      bottomGapLines: Math.max(
+                        0,
+                        +((settings.bottomGapLines ?? 0) - 0.2).toFixed(1)
+                      ),
+                    })
+                  }
+                >
+                  <Text style={styles.stepText}>－</Text>
+                </TouchableOpacity>
+                <Text style={[styles.menuVal, { color: APP.text }]}>
+                  {(settings.bottomGapLines ?? 0).toFixed(1)} 行
+                </Text>
+                <TouchableOpacity
+                  style={styles.step}
+                  onPress={() =>
+                    updateSettings({
+                      bottomGapLines: Math.min(
+                        5,
+                        +((settings.bottomGapLines ?? 0) + 0.2).toFixed(1)
+                      ),
                     })
                   }
                 >
