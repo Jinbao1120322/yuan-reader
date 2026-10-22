@@ -742,20 +742,19 @@ export function ReaderScreen() {
   const shotQueueRef = useRef<{ idx: number; text: string }[]>([]);
   const [shotTarget, setShotTarget] = useState<{ idx: number; text: string } | null>(null);
 
-  // 换章 / 改字号行距 / 改每页行数 / 尺寸变化 → 旧位图全部作废，必须清掉，
-  // 否则会贴出上一个排版下的内容（页码已经对不上了）
+  /*
+   * 位图失效：**直接盯住分页结果 pages**。
+   *
+   * 之前是枚举条件（换章 / 改字号 / 改行距 / 改每页行数 / 段首缩进 / 尺寸），
+   * 结果加了「顶部留白 / 底部留白」之后忘了补 —— 调留白会重排分页，
+   * 但旧图仍然挂在旧页码上，于是翻到第 2 页贴出来的是"旧排版下的第 2 页"，
+   * 用户看到的就是「不管翻多少页都是同一页」。
+   *
+   * pages 是 useMemo，任何导致重排的输入变都会产出新数组，所以盯它就够了。
+   */
   useEffect(() => {
     setPageImages({});
-  }, [
-    index,
-    settings.fontSize,
-    settings.lineHeight,
-    settings.linesPerPage,
-    settings.paraIndent,
-    area.w,
-    area.h,
-    content.length,
-  ]);
+  }, [pages]);
 
   // 入队：优先下一页（翻页最需要），再当前页、上一页
   useEffect(() => {
