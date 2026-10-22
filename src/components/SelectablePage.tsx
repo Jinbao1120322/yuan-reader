@@ -95,12 +95,32 @@ export function SelectablePage(props: Props) {
   const selRef = useRef(sel);
   selRef.current = sel;
 
+  /*
+   * 手柄拖动时**冻结**起始坐标。
+   * 如果每次 move 都读「手柄当前位置 + 累计 dy」，而手柄位置又被上一次 move 改过，
+   * 位移就会被重复累加 —— 手指移 10pt，选区跑 20pt、30pt，越拖越远（"乱跑"）。
+   * 所以 Grant 时把基准存下来，整个拖动过程只用它。
+   */
+  const dragBaseRef = useRef<{ x: number; y: number } | null>(null);
+
+  /*
+   * 排版参数走 ref。
+   * PanResponder 必须是**一次性创建**的（依赖为空），否则选区一变 →
+   * useMemo 重跑 → PanResponder 被换掉 → 正在进行的拖动直接中断。
+   * 所以它内部不能闭包最新的 lines/lineH，只能通过 ref 读。
+   */
+  const metricsRef = useRef({ lines, lineH, padTop, padH, fontSize });
+  metricsRef.current = { lines, lineH, padTop, padH, fontSize };
+
+  const handlesRef = useRef<{ a: { x: number; y: number }; b: { x: number; y: number } } | null>(null);
+
   const hitTest = (x: number, y: number): Pos => {
-    const rel = y - padTop;
-    let line = Math.floor(rel / lineH);
+    const m = metricsRef.current;
+    const rel = y - m.padTop;
+    let line = Math.floor(rel / m.lineH);
     if (line < 0) line = 0;
-    if (line > lines.length - 1) line = Math.max(0, lines.length - 1);
-    const ch = charAt(lines[line] || '', x - padH, fontSize);
+    if (line > m.lines.length - 1) line = Math.max(0, m.lines.length - 1);
+    const ch = charAt(m.lines[line] || '', x - m.padH, m.fontSize);
     return { line, ch };
   };
 
@@ -125,7 +145,7 @@ export function SelectablePage(props: Props) {
         onPanResponderRelease: () => setDragging(false),
         onPanResponderTerminate: () => setDragging(false),
       }),
-    [lines, lineH, padTop, padH, fontSize]
+    [] // 一次性创建，内部只读 ref
   );
 
   /* ---------- 选区规范化 ---------- */
@@ -184,18 +204,23 @@ export function SelectablePage(props: Props) {
     };
   }, [range, lines, fontSize, lineH, padTop, padH]);
 
-  /** 手柄拖动：拖起点改 anchor，拖终点改 focus，并自动纠正前后关系 */
+  handlesRef.current = handles;
+
+  /** 手柄拖动：拖起点改 anchor，拖终点改 focus（钳制，不交换身份） */
   const makeHandleResponder = (which: 'anchor' | 'focus') => () =>
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: () => setDragging(true),
+      onPanResponderGrant: () => {
+        // 冻结基准：整个拖动过程只认这一份坐标
+        dragBaseRef.current = (which === 'anchor' ? handlesRef.current?.a : handlesRef.current?.b) ?? null;
+        setDragging(true);
+      },
       onPanResponderMove: (_e, g) => {
         const cur = selRef.current;
         if (!cur) return;
-        // 目标点 = 手柄**原始位置** + 手指位移（locationX 是相对手柄的，不能用）
-        const base = which === 'anchor' ? handles?.a : handles?.b;
+        const base = dragBaseRef.current;
         if (!base) return;
         let target = hitTest(base.x + g.dx, base.y + g.dy);
 
@@ -219,20 +244,19 @@ export function SelectablePage(props: Props) {
           setSel({ anchor: a, focus: target });
         }
       },
-      onPanResponderRelease: () => setDragging(false),
-      onPanResponderTerminate: () => setDragging(false),
+      onPanResponderRelease: () => {
+        dragBaseRef.current = null;
+        setDragging(false);
+      },
+      onPanResponderTerminate: () => {
+        dragBaseRef.current = null;
+        setDragging(false);
+      },
     });
 
-  const anchorResponder = useMemo(
-    () => makeHandleResponder('anchor')(),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [handles, lines, lineH, padTop, padH, fontSize]
-  );
-  const focusResponder = useMemo(
-    () => makeHandleResponder('focus')(),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [handles, lines, lineH, padTop, padH, fontSize]
-  );
+  // 手柄 responder 也只建一次（内部通过 handlesRef 拿实时位置）
+  const anchorResponder = useMemo(() => makeHandleResponder('anchor')(), []);
+  const focusResponder = useMemo(() => makeHandleResponder('focus')(), []);
 
   const hasSelection = selectedText.trim().length > 0;
 

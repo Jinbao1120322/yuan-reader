@@ -1358,7 +1358,8 @@ export function ReaderScreen() {
                       position: 'absolute',
                       left: 24,
                       right: 24,
-                      bottom: Math.max(14, insets.bottom + 6),
+                      // 抬到底部工具栏（74pt）之上，否则会被「上一章/目录/设置/下一章」盖住点不到
+                      bottom: insets.bottom + 74 + 10,
                       paddingVertical: 13,
                       borderRadius: 12,
                       backgroundColor: APP.card,
