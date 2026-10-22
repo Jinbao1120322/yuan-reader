@@ -230,6 +230,14 @@ export function PageCurlView(props: Props) {
    * 静止态绕开卷页结构，这个窗口就不存在了。
    */
   const [flipping, setFlipping] = useState(false);
+  /*
+   * 翻页期间锁定的"基准页"。
+   * setFlipping(false) 是异步的 —— 页码变了、但退出翻页态要等下一次渲染，
+   * 中间那一帧仍在用卷页结构，而底层算的是 pages[index+1] → 闪出下下页。
+   * 所以翻页一开始就把起始页记下来，整个翻页过程只用它算"纸面 / 底层"，
+   * 与实时的 index 脱钩。这样即使晚一帧，显示的也还是正确的页对。
+   */
+  const [flipBase, setFlipBase] = useState(index);
 
   useEffect(() => {
     animatingSV.value = false;
@@ -357,6 +365,7 @@ export function PageCurlView(props: Props) {
       // 否则渲染的还是错误方向的页面组合。
       dirSV.value = d === 'next' ? 0 : 1;
       runOnJS(setDir)(d);
+      runOnJS(setFlipBase)(latest.current.index);
       runOnJS(setFlipping)(true);
       animatingSV.value = true;
       dragX.value = withTiming(d === 'next' ? -AW : AW, { duration: 280 }, (fin) => {
@@ -419,6 +428,7 @@ export function PageCurlView(props: Props) {
       .activeOffsetX([-24, 24])
       .failOffsetY([-40, 40])
       .onBegin((e) => {
+        runOnJS(setFlipBase)(latest.current.index);
         runOnJS(setFlipping)(true);
         'worklet';
         grantX.value = e.x;
@@ -511,12 +521,17 @@ export function PageCurlView(props: Props) {
 
   // simulate：翻下一页时上层是当前页、底层是下一页；翻上一页时上层是上一页、底层是当前页。
   // slide：当前页直接平移走，底层换成真正该露出的那一页。
-  const sheetText = dir === 'next' ? pages[index] ?? '' : pages[index - 1] ?? '';
-  // 页码：给 PageLayer 找对应的预渲染位图
-  const sheetIdx = dir === 'next' ? index : index - 1;
-  const underIdx = dir === 'next' ? index + 1 : index;
-  const underText = dir === 'next' ? pages[index + 1] ?? '' : pages[index] ?? '';
-  const slideUnder = dir === 'next' ? pages[index + 1] ?? '' : pages[index - 1] ?? '';
+  /*
+   * 卷页结构里所有的"页"都基于 flipBase（翻页开始那一页），不用实时 index。
+   * 翻页结束、index 已经 +1 但还没退出卷页态的那一帧，
+   * 纸面仍是 base 页、底层仍是 base+1 —— 正是翻完之后该看到的画面，不会闪错页。
+   */
+  const base = flipBase;
+  const sheetIdx = dir === 'next' ? base : base - 1;
+  const underIdx = dir === 'next' ? base + 1 : base;
+  const underText = dir === 'next' ? pages[base + 1] ?? '' : pages[base] ?? '';
+  const slideUnder = dir === 'next' ? pages[base + 1] ?? '' : pages[base - 1] ?? '';
+  const sheetText = dir === 'next' ? pages[base] ?? '' : pages[base - 1] ?? '';
 
   /*
    * 静止态：只画当前页。
