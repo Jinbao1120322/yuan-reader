@@ -250,6 +250,18 @@ export function PageCurlView(props: Props) {
      */
     dirSV.value = 0;
     setDir('next');
+    /*
+     * 强制兜底：页码一变，立刻回到「静止态」。
+     *
+     * 之前只靠 commitFlip / springBack 里 setFlipping(false)，一旦动画被打断
+     * （withTiming/withSpring 的回调 fin === false），就没有任何地方复位它 ——
+     * flipping 永久停在 true，于是永远走卷页结构、永远画 pages[flipBase]，
+     * 表现就是「翻页后一直停在某一页不动」（用户看到的是刚开始阅读的第二页）。
+     *
+     * 这里再补一刀，任何情况下 index 变化都会把翻页态清掉、基准页同步过来。
+     */
+    setFlipping(false);
+    setFlipBase(index);
   }, [index, areaW, mode, animatingSV, dragX, dirSV]);
 
   // 每片的静态几何：只跟 R 有关，翻页过程中完全不变
