@@ -367,9 +367,12 @@ export function ReaderScreen() {
    * 这两个值会同时作用于「可排印高度」和「页面内边距」，所以只改这里就够。
    */
   const lineH = settings.fontSize * settings.lineHeight;
-  // 顶部留白可调（单位行，步长 0.5），默认 1.5 行
-  const topGap = Math.max(0, Math.min(5, settings.topGapLines ?? 1.5));
-  const metaHeaderH = lineH * topGap;
+  /*
+   * 顶部留白固定 1.5 行（设置项已按用户要求移除）。
+   * 之前做成可调，但实测调整后正文位置几乎没变——查不出是存档值没写进去
+   * 还是重排链路有问题，用户要求直接删掉这个入口，固定一个合适的值。
+   */
+  const metaHeaderH = lineH * 1.5;
   const metaFooterH = lineH * Math.max(0, settings.bottomGapLines ?? 0);
 
   // zustand 的持久化是异步的（AsyncStorage）。首帧 shelf 还是空数组，
@@ -1287,7 +1290,14 @@ export function ReaderScreen() {
                 areaH={area.h}
                 headerH={metaHeaderH}
                 footerH={metaFooterH}
-                images={pageImages}
+                /*
+                 * 暂时停用位图化。
+                 * 现象：翻页后显示的是别的页的文字（诊断显示 index / flipBase 都对），
+                 * 说明是贴图贴错了 —— captureRef 是异步的，截到的可能是相邻页的画面。
+                 * 先把图这条路关掉，用纯文字渲染验证：如果内容对了，就锁定是位图化的锅。
+                 * 截图管线代码保留（pageImages / 截图宿主都还在），只是不再喂给渲染层。
+                 */
+                images={undefined}
                 onLongPress={() => {
                   // 长按正文 = 进入选取状态，选中文字后自动弹过滤面板
                   setSelectMode(true);
@@ -1737,40 +1747,6 @@ export function ReaderScreen() {
                     onPress={() => updateSettings({ theme: k })}
                   />
                 ))}
-              </View>
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.menuLabel}>顶部留白</Text>
-              <View style={styles.stepper}>
-                <TouchableOpacity
-                  style={styles.step}
-                  onPress={() =>
-                    updateSettings({
-                      topGapLines: Math.max(
-                        0,
-                        +((settings.topGapLines ?? 1.5) - 0.5).toFixed(1)
-                      ),
-                    })
-                  }
-                >
-                  <Text style={styles.stepText}>－</Text>
-                </TouchableOpacity>
-                <Text style={[styles.menuVal, { color: APP.text }]}>
-                  {(settings.topGapLines ?? 1.5).toFixed(1)} 行
-                </Text>
-                <TouchableOpacity
-                  style={styles.step}
-                  onPress={() =>
-                    updateSettings({
-                      topGapLines: Math.min(
-                        5,
-                        +((settings.topGapLines ?? 1.5) + 0.5).toFixed(1)
-                      ),
-                    })
-                  }
-                >
-                  <Text style={styles.stepText}>＋</Text>
-                </TouchableOpacity>
               </View>
             </View>
             <View style={styles.row}>

@@ -552,22 +552,6 @@ export function PageCurlView(props: Props) {
   const slideUnder = dir === 'next' ? pages[base + 1] ?? '' : pages[base - 1] ?? '';
   const sheetText = dir === 'next' ? pages[base] ?? '' : pages[base - 1] ?? '';
 
-  /* 临时诊断（定位完就删）：i=当前页 b=翻页基准 f=是否翻页中 n=总页数 */
-  const dbgNode = (
-    <Text
-      style={{
-        position: 'absolute',
-        right: 6,
-        top: 2,
-        zIndex: 99,
-        fontSize: 10,
-        color: 'rgba(255,0,0,0.75)',
-      }}
-    >
-      {`i${index} b${flipBase} f${flipping ? 1 : 0} n${pages.length}`}
-    </Text>
-  );
-
   /*
    * 静止态：只画当前页。
    * 同时把相邻两页挂在完全透明的层里（看不见，但会被排版并缓存），
@@ -589,7 +573,6 @@ export function PageCurlView(props: Props) {
           <View style={[styles.layer, { zIndex: 1 }]} pointerEvents="none">
             {pageBody(pages[index] ?? '', index)}
           </View>
-          {dbgNode}
         </View>
       </GestureDetector>
     );
