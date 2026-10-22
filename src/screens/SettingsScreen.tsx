@@ -7,6 +7,7 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useStore, ReplaceRule } from '../store/useStore';
@@ -166,16 +167,23 @@ export function SettingsScreen() {
             <TouchableOpacity style={styles.addBtn} onPress={addReplace}>
               <Text style={styles.addText}>添加规则</Text>
             </TouchableOpacity>
-            {settings.replaceRules.map((r, i) => (
-              <View style={styles.ruleItem} key={i}>
-                <Text style={styles.ruleText} numberOfLines={1}>
-                  /{r.pattern}/ → {r.replacement || '（删除）'}
-                </Text>
-                <TouchableOpacity onPress={() => removeReplace(i)}>
-                  <Text style={{ color: APP.danger }}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
+            {/* 规则可能有几十条，套一个限高的滚动区，否则下面全被挤出屏幕 */}
+            <ScrollView
+              style={styles.ruleList}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+            >
+              {settings.replaceRules.map((r, i) => (
+                <View style={styles.ruleItem} key={i}>
+                  <Text style={styles.ruleText} numberOfLines={1}>
+                    /{r.pattern}/ → {r.replacement || '（删除）'}
+                  </Text>
+                  <TouchableOpacity onPress={() => removeReplace(i)}>
+                    <Text style={{ color: APP.danger }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
           </View>
         )}
 
@@ -318,6 +326,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   addText: { color: '#fff', fontWeight: '700' },
+  ruleList: { maxHeight: 260, marginTop: 6 },
   ruleItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',

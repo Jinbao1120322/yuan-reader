@@ -33,6 +33,12 @@ interface Props {
   padTop: number;
   padBottom: number;
   padH: number;
+  /**
+   * 容器顶部在屏幕上的偏移（= 安全区 top）。
+   * 用它把手指的 pageY 换算成容器内坐标 —— 比 locationY 可靠，
+   * 不受父级 padding / 嵌套布局影响。
+   */
+  offsetTop?: number;
   /** 净化 = 直接删；替换 = 打开输入框 */
   onAction: (selected: string, action: SelectAction) => void;
   /** 退出选择模式 */
@@ -85,6 +91,7 @@ export function SelectablePage(props: Props) {
     padTop,
     padBottom,
     padH,
+    offsetTop = 0,
     onAction,
     onExit,
   } = props;
@@ -117,6 +124,10 @@ export function SelectablePage(props: Props) {
 
   const handlesRef = useRef<{ a: { x: number; y: number }; b: { x: number; y: number } } | null>(null);
 
+  /** 屏幕坐标 → 容器内坐标 → 字符位置 */
+  const hitTestScreen = (pageX: number, pageY: number): Pos =>
+    hitTest(pageX, pageY - offsetTop);
+
   const hitTest = (x: number, y: number): Pos => {
     const m = metricsRef.current;
     const rel = y - m.padTop;
@@ -135,12 +146,15 @@ export function SelectablePage(props: Props) {
         onMoveShouldSetPanResponder: () => true,
         onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: (e) => {
-          const p = hitTest(e.nativeEvent.locationX, e.nativeEvent.locationY);
+          // 用 pageX/pageY（屏幕坐标）换算，不再用 locationY ——
+          // locationY 是相对「手势绑定视图」的，一旦外层有 padding（比如让出状态栏的 59pt），
+          // 算出来的行号就会整体偏移，表现就是"选中中间、选区却跑到最上面"。
+          const p = hitTestScreen(e.nativeEvent.pageX, e.nativeEvent.pageY);
           setSel({ anchor: p, focus: p });
           setDragging(true);
         },
         onPanResponderMove: (e) => {
-          const p = hitTest(e.nativeEvent.locationX, e.nativeEvent.locationY);
+          const p = hitTestScreen(e.nativeEvent.pageX, e.nativeEvent.pageY);
           const cur = selRef.current;
           if (!cur) return;
           setSel({ anchor: cur.anchor, focus: p });
@@ -263,6 +277,28 @@ export function SelectablePage(props: Props) {
 
   const hasSelection = selectedText.trim().length > 0;
 
+  /*
+   * 浮动菜单位置：优先选区上方；上方放不下（会撞状态栏/导航栏）就落到选区下方；
+   * 下方也放不下就贴着顶部兜底。水平方向居中于选区，并夹在左右边界内。
+   * 这样既"弹在选中附近"（用户更喜欢这个），又不会被导航栏/工具栏吃掉。
+   */
+  const MENU_H = 42;
+  const MENU_W = 216;
+  const menuPos = useMemo(() => {
+    if (!highlights.length) return null;
+    const first = highlights[0];
+    const last = highlights[highlights.length - 1];
+    const above = first.top - MENU_H - 10;
+    const below = last.top + lineH + 10;
+    let top: number;
+    if (above >= 8) top = above;
+    else if (below + MENU_H <= height - 8) top = below;
+    else top = 8;
+    const cx = first.left + first.w / 2;
+    const left = Math.min(Math.max(8, cx - MENU_W / 2), Math.max(8, width - MENU_W - 8));
+    return { top, left };
+  }, [highlights, lineH, width, height]);
+
   return (
     <View style={{ width, height, backgroundColor: bg }}>
       {/* 正文：逐行渲染，行坐标才确定 */}
@@ -308,35 +344,27 @@ export function SelectablePage(props: Props) {
         </>
       ) : null}
 
-      {/*
-       * 底部固定操作条。
-       * 原来用「浮在选区上方」的菜单，但选区靠上时会被顶部导航栏挡住、
-       * 靠下时又被底部工具栏挡住 —— 位置算不完。改成钉死在容器底部，
-       * 永远可见、永远点得到，而且顺带显示选中的内容预览。
-       */}
-      <View style={styles.bottomBar}>
-        <View style={{ flex: 1, marginRight: 8 }}>
-          <Text style={styles.preview} numberOfLines={1}>
-            {hasSelection ? selectedText.trim() : '按住正文拖动选字'}
+      {/* 浮动菜单：贴在选中位置附近（净化 / 替换），带选中内容预览 */}
+      {hasSelection && !dragging && menuPos ? (
+        <View style={[styles.menu, { top: menuPos.top, left: menuPos.left }]}>
+          <Text style={styles.menuPreview} numberOfLines={1}>
+            {selectedText.trim().slice(0, 10)}
           </Text>
-          {hasSelection ? (
-            <Text style={styles.previewSub} numberOfLines={1}>
-              已选 {selectedText.trim().length} 字
-            </Text>
-          ) : null}
+          <View style={styles.menuDivider} />
+          <Text
+            style={styles.menuBtn}
+            onPress={() => onAction(selectedText.trim(), 'filter')}
+          >
+            净化
+          </Text>
+          <Text
+            style={styles.menuBtn}
+            onPress={() => onAction(selectedText.trim(), 'replace')}
+          >
+            替换
+          </Text>
         </View>
-        {hasSelection ? (
-          <>
-            <BarBtn
-              label="净化"
-              solid
-              onPress={() => onAction(selectedText.trim(), 'filter')}
-            />
-            <BarBtn label="替换" onPress={() => onAction(selectedText.trim(), 'replace')} />
-          </>
-        ) : null}
-        <BarBtn label="退出" ghost onPress={onExit} />
-      </View>
+      ) : null}
     </View>
   );
 }
@@ -386,55 +414,38 @@ function Handle({
   );
 }
 
-function BarBtn({
-  label,
-  onPress,
-  solid,
-  ghost,
-}: {
-  label: string;
-  onPress: () => void;
-  solid?: boolean;
-  ghost?: boolean;
-}) {
-  return (
-    <View
-      onStartShouldSetResponder={() => true}
-      onResponderRelease={onPress}
-      style={[
-        styles.barBtn,
-        solid && styles.barBtnSolid,
-        ghost && styles.barBtnGhost,
-      ]}
-    >
-      <Text style={[styles.barBtnText, solid && { color: '#fff' }]}>{label}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  bottomBar: {
+  menu: {
     position: 'absolute',
-    left: 10,
-    right: 10,
-    bottom: 6,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(28,28,30,0.96)',
+    height: 42,
+    backgroundColor: 'rgba(28,28,30,0.97)',
     borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 8,
   },
-  preview: { color: '#fff', fontSize: 12, fontWeight: '500' },
-  previewSub: { color: '#8e8e93', fontSize: 10, marginTop: 1 },
-  barBtn: {
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderRadius: 7,
-    marginLeft: 5,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+  menuPreview: {
+    color: '#8e8e93',
+    fontSize: 11,
+    maxWidth: 86,
+    marginLeft: 4,
   },
-  barBtnSolid: { backgroundColor: '#0a84ff' },
-  barBtnGhost: { backgroundColor: 'transparent' },
-  barBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  menuDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 18,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    marginHorizontal: 4,
+  },
+  menuBtn: {
+    color: '#0a84ff',
+    fontSize: 14,
+    fontWeight: '600',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
 });

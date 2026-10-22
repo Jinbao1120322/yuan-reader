@@ -64,7 +64,8 @@ export interface Settings {
   paraIndent: boolean; // 段首缩进两字
   paraGap: number; // 段落之间空几行
   linesPerPage: number; // 每页固定行数（用户可调，10-30）
-  bottomGapLines: number; // 页面底部额外留白，单位「行」（0-4）
+  bottomGapLines: number; // 页面底部额外留白，单位「行」（0-5）
+  topGapLines: number; // 页面顶部额外留白，单位「行」（0-5，步长 0.5）
   bgColor?: string;
   pageMode: PageMode;
   replaceRules: ReplaceRule[];
@@ -127,6 +128,7 @@ const defaultSettings: Settings = {
   paraGap: 0,
   linesPerPage: 18,
   bottomGapLines: 0,
+  topGapLines: 1.5,
   pageMode: 'scroll',
   replaceRules: [],
   useSystemUA: true,

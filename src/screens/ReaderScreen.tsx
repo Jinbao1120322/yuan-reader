@@ -367,7 +367,9 @@ export function ReaderScreen() {
    * 这两个值会同时作用于「可排印高度」和「页面内边距」，所以只改这里就够。
    */
   const lineH = settings.fontSize * settings.lineHeight;
-  const metaHeaderH = lineH * 1.5; // 顶部留白：一行半（两行太空，一行又贴）
+  // 顶部留白可调（单位行，步长 0.5），默认 1.5 行
+  const topGap = Math.max(0, Math.min(5, settings.topGapLines ?? 1.5));
+  const metaHeaderH = lineH * topGap;
   const metaFooterH = lineH * Math.max(0, settings.bottomGapLines ?? 0);
 
   // zustand 的持久化是异步的（AsyncStorage）。首帧 shelf 还是空数组，
@@ -800,23 +802,38 @@ export function ReaderScreen() {
     };
   }, [shotTarget, area.w, area.h]);
 
-  // 章节内容/排版变化后，按 pending 定位当前页（翻章时跳到首/末页），并持久化进度
+  /*
+   * 首次进书：把书架里存的章节 + 页码还原回来。
+   * 之前完全没有这段逻辑 —— 所以退出再进来永远停在本章第一页。
+   * 用 pendingPageIndex 传递，让下面的 effect 去夹紧并落位。
+   */
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || !shelfBook || !chapters.length) return;
+    restoredRef.current = true;
+    const ci = Math.min(shelfBook.lastChapterIndex ?? 0, chapters.length - 1);
+    if (ci > 0) setIndex(ci);
+    if ((shelfBook.lastReadPos ?? 0) > 0) {
+      pendingPageIndex.current = shelfBook.lastReadPos;
+    }
+  }, [shelfBook, chapters.length]);
+
+  /*
+   * 章节排版变化后落位。
+   * **只有 pending 存在时才动 pageIndex、才写进度**：
+   * 之前没有 pending 时也会 t = pageIndex 然后 updateProgress，
+   * 等于进书那一刻就把进度改写成 0（pageIndex 初值就是 0），把存的位置冲掉了。
+   */
   useEffect(() => {
     if (!pages.length) return;
-    let t: number;
-    if (pendingPageIndex.current !== null) {
-      t =
-        pendingPageIndex.current === -1
-          ? pages.length - 1
-          : pendingPageIndex.current;
-      pendingPageIndex.current = null;
-    } else {
-      t = pageIndex;
-    }
-    t = Math.min(Math.max(t, 0), Math.max(0, pages.length - 1));
+    if (pendingPageIndex.current === null) return;
+    const want =
+      pendingPageIndex.current === -1 ? pages.length - 1 : pendingPageIndex.current;
+    pendingPageIndex.current = null;
+    const t = Math.min(Math.max(want, 0), Math.max(0, pages.length - 1));
     setPageIndex(t);
     updateProgress(bookUrl, sourceId, index, t);
-  }, [pages, pageIndex, index, bookUrl, sourceId, updateProgress]);
+  }, [pages, index, bookUrl, sourceId, updateProgress]);
 
   const goPrev = () => {
     if (index > 0) {
@@ -1312,6 +1329,7 @@ export function ReaderScreen() {
                     padTop={PAGE_PAD_TOP + metaHeaderH}
                     padBottom={PAGE_PAD_BOTTOM + metaFooterH}
                     padH={PAGE_PAD_H}
+                    offsetTop={insets.top}
                     onExit={() => setSelectMode(false)}
                     onAction={(sel, action) => {
                       setSelectMode(false);
@@ -1328,12 +1346,24 @@ export function ReaderScreen() {
                         .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
                         .join('[ \\t]*\\r?\\n[ \\t]*');
                       if (action === 'filter') {
-                        // 净化 = 直接删除，不加确认、不弹面板，立刻生效
+                        /*
+                         * 净化 = 直接删除，立刻生效。
+                         * **跨行必须逐行加规则**：选中的文字来自 `pages[]`（分页后按测量切的行），
+                         * 而替换规则是对原文 `content` 跑的 —— 两边行边界不一样，
+                         * 拿整段（带换行）去匹配原文永远匹配不到，看起来就是"跨行净化没反应"。
+                         * 逐行拆开、每行各自作为一条字面规则，就能命中了。
+                         */
+                        const parts = raw
+                          .split('\n')
+                          .map((l) => l.trim())
+                          .filter((l) => l.length >= 2);
+                        const adds = (parts.length ? parts : [raw]).map((l) => ({
+                          pattern: l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+                          replacement: '',
+                          isRegex: false,
+                        }));
                         updateSettings({
-                          replaceRules: [
-                            ...settings.replaceRules,
-                            { pattern, replacement: '', isRegex: false },
-                          ],
+                          replaceRules: [...settings.replaceRules, ...adds],
                         });
                         setReloadTick((t) => t + 1);
                         return;
@@ -1708,6 +1738,40 @@ export function ReaderScreen() {
                     onPress={() => updateSettings({ theme: k })}
                   />
                 ))}
+              </View>
+            </View>
+            <View style={styles.row}>
+              <Text style={styles.menuLabel}>顶部留白</Text>
+              <View style={styles.stepper}>
+                <TouchableOpacity
+                  style={styles.step}
+                  onPress={() =>
+                    updateSettings({
+                      topGapLines: Math.max(
+                        0,
+                        +((settings.topGapLines ?? 1.5) - 0.5).toFixed(1)
+                      ),
+                    })
+                  }
+                >
+                  <Text style={styles.stepText}>－</Text>
+                </TouchableOpacity>
+                <Text style={[styles.menuVal, { color: APP.text }]}>
+                  {(settings.topGapLines ?? 1.5).toFixed(1)} 行
+                </Text>
+                <TouchableOpacity
+                  style={styles.step}
+                  onPress={() =>
+                    updateSettings({
+                      topGapLines: Math.min(
+                        5,
+                        +((settings.topGapLines ?? 1.5) + 0.5).toFixed(1)
+                      ),
+                    })
+                  }
+                >
+                  <Text style={styles.stepText}>＋</Text>
+                </TouchableOpacity>
               </View>
             </View>
             <View style={styles.row}>
