@@ -367,8 +367,8 @@ export function PageCurlView(props: Props) {
 
     // 长按：打开过滤面板。放 Exclusive 最前面，手指按住不动 450ms 就归它
     const longPress = Gesture.LongPress()
-      .minDuration(450)
-      .maxDistance(20)
+      .minDuration(400)
+      .maxDistance(30) // 手指按住时的自然抖动不算移动
       .onEnd(() => {
         'worklet';
         if (onLongPress) runOnJS(onLongPress)();
@@ -395,6 +395,14 @@ export function PageCurlView(props: Props) {
       });
 
     const pan = Gesture.Pan()
+      /*
+       * 必须给 Pan 设激活距离。
+       * 不设的话它几乎一碰就激活，长按（要 400ms 不动）永远抢不过它 ——
+       * 表现就是「长按没反应」，进不了选取模式。
+       * 24pt 对翻页几乎没影响（半厘米都不到），但给长按留出了窗口。
+       */
+      .activeOffsetX([-24, 24])
+      .failOffsetY([-40, 40])
       .onBegin((e) => {
         'worklet';
         grantX.value = e.x;

@@ -4,36 +4,37 @@ import { Text } from './AppText';
 
 /*
  * ===========================================================================
- * 自绘文字选择（SelectablePage）
+ * 自绘文字选择（SelectablePage）—— 对齐爱阅书香的交互
  * ===========================================================================
- * 为什么不用系统的 TextInput / Text：
- *   - `<Text selectable>` 拿不到「选中了哪几个字」，只能弹系统菜单
- *   - `TextInput` 在这套 RN + iOS 上要么选中手柄出不来（editable=false），
- *     要么弹键盘挡住半屏
+ * 交互要点：
+ *   1. 按住拖动 → 蓝色高亮跟着走
+ *   2. 选区**两端各有一个可拖的手柄**，拖它精调起止位置
+ *   3. 选区上方浮一条菜单：**净化 / 替换**（不用低头找底部按钮）
  *
- * 爱阅书香、微信读书、Kindle 的做法都是**自己实现**：
- *   长按定位字符 → 拖动改范围 → 自己画高亮 → 弹自己的菜单
+ * 为什么不用系统 TextInput：
+ *   `<Text selectable>` 拿不到选中范围；`TextInput` 在 iOS 上要么手柄出不来，
+ *   要么弹键盘挡住半屏。所以坐标、选区、手柄、菜单全部自己算。
  *
- * 这里就是这套做法的最小实现。前提是正文**已经按行切好**（每行一个 \n），
- * 所以每行的 y = 行号 × 行高，字符位置可以按字宽近似算出来。
+ * 前提：正文已按行切好（`\n` 分隔），所以「第 i 行 y = i × 行高」是确定的，
+ * 字符 x 按字宽累加即可（CJK 全角、其余半角）。
  * ===========================================================================
  */
 
+export type SelectAction = 'filter' | 'replace';
+
 interface Props {
-  /** 一页的文本，行之间用 \n 分隔（就是 pages[i]） */
   text: string;
   width: number;
   height: number;
   fontSize: number;
-  /** 行高倍数（settings.lineHeight） */
   lineHeight: number;
   color: string;
   bg: string;
   padTop: number;
   padBottom: number;
   padH: number;
-  /** 用户选完并点了动作按钮 */
-  onAction: (selected: string, action: 'filter' | 'copy') => void;
+  /** 净化 = 直接删；替换 = 打开输入框 */
+  onAction: (selected: string, action: SelectAction) => void;
 }
 
 interface Pos {
@@ -41,17 +42,15 @@ interface Pos {
   ch: number;
 }
 
-/** 中日韩字符按全角算，其余按半角 */
 function isWide(code: number): boolean {
   return (
-    (code >= 0x2e80 && code <= 0x9fff) || // 部首 ~ 汉字
-    (code >= 0x3000 && code <= 0x303f) || // 中文标点
-    (code >= 0xff00 && code <= 0xffef) || // 全角字符
+    (code >= 0x2e80 && code <= 0x9fff) ||
+    (code >= 0x3000 && code <= 0x303f) ||
+    (code >= 0xff00 && code <= 0xffef) ||
     (code >= 0xa960 && code <= 0xa97f)
   );
 }
 
-/** 一行里，第 n 个字符左边距（相对行首） */
 function xAt(line: string, index: number, fs: number): number {
   let w = 0;
   const n = Math.min(index, line.length);
@@ -61,7 +60,6 @@ function xAt(line: string, index: number, fs: number): number {
   return w;
 }
 
-/** 反查：横坐标 x 落在第几个字符（按字符中点判断） */
 function charAt(line: string, x: number, fs: number): number {
   if (x <= 0) return 0;
   let w = 0;
@@ -94,13 +92,9 @@ export function SelectablePage(props: Props) {
   const [sel, setSel] = useState<{ anchor: Pos; focus: Pos } | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  // PanResponder 的闭包里拿不到最新 state，用 ref 兜着
   const selRef = useRef(sel);
   selRef.current = sel;
-  const draggingRef = useRef(dragging);
-  draggingRef.current = dragging;
 
-  /** 屏幕坐标 → 字符位置 */
   const hitTest = (x: number, y: number): Pos => {
     const rel = y - padTop;
     let line = Math.floor(rel / lineH);
@@ -110,63 +104,49 @@ export function SelectablePage(props: Props) {
     return { line, ch };
   };
 
-  const responder = useMemo(
+  /* ---------- 主体拖动：拉出选区 ---------- */
+  const bodyResponder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
         onPanResponderTerminationRequest: () => false,
-
         onPanResponderGrant: (e) => {
           const p = hitTest(e.nativeEvent.locationX, e.nativeEvent.locationY);
           setSel({ anchor: p, focus: p });
           setDragging(true);
         },
-
         onPanResponderMove: (e) => {
           const p = hitTest(e.nativeEvent.locationX, e.nativeEvent.locationY);
           const cur = selRef.current;
           if (!cur) return;
           setSel({ anchor: cur.anchor, focus: p });
         },
-
-        onPanResponderRelease: () => {
-          setDragging(false);
-        },
-
-        onPanResponderTerminate: () => {
-          setDragging(false);
-        },
+        onPanResponderRelease: () => setDragging(false),
+        onPanResponderTerminate: () => setDragging(false),
       }),
     [lines, lineH, padTop, padH, fontSize]
   );
 
-  /** 选中范围规范化：起点在前，终点在后 */
+  /* ---------- 选区规范化 ---------- */
   const range = useMemo(() => {
     if (!sel) return null;
     let a = sel.anchor;
     let b = sel.focus;
-    if (a.line > b.line || (a.line === b.line && a.ch > b.ch)) {
-      [a, b] = [b, a];
-    }
+    if (a.line > b.line || (a.line === b.line && a.ch > b.ch)) [a, b] = [b, a];
     return { a, b };
   }, [sel]);
 
-  /** 拼出选中的文字 */
   const selectedText = useMemo(() => {
     if (!range) return '';
     const { a, b } = range;
-    if (a.line === b.line) {
-      return (lines[a.line] || '').slice(a.ch, b.ch);
-    }
-    const parts: string[] = [];
-    parts.push((lines[a.line] || '').slice(a.ch));
+    if (a.line === b.line) return (lines[a.line] || '').slice(a.ch, b.ch);
+    const parts: string[] = [(lines[a.line] || '').slice(a.ch)];
     for (let i = a.line + 1; i < b.line; i++) parts.push(lines[i] || '');
     parts.push((lines[b.line] || '').slice(0, b.ch));
     return parts.join('\n');
   }, [range, lines]);
 
-  /** 每行的高亮矩形 */
   const highlights = useMemo(() => {
     if (!range) return [];
     const { a, b } = range;
@@ -188,24 +168,93 @@ export function SelectablePage(props: Props) {
     return out;
   }, [range, lines, fontSize, lineH, padTop, padH]);
 
+  /* ---------- 手柄位置 ---------- */
+  const handles = useMemo(() => {
+    if (!range) return null;
+    const { a, b } = range;
+    return {
+      a: {
+        x: padH + xAt(lines[a.line] || '', a.ch, fontSize),
+        y: padTop + a.line * lineH,
+      },
+      b: {
+        x: padH + xAt(lines[b.line] || '', b.ch, fontSize),
+        y: padTop + b.line * lineH,
+      },
+    };
+  }, [range, lines, fontSize, lineH, padTop, padH]);
+
+  /** 手柄拖动：拖起点改 anchor，拖终点改 focus，并自动纠正前后关系 */
+  const makeHandleResponder = (which: 'anchor' | 'focus') => () =>
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: () => setDragging(true),
+      onPanResponderMove: (e, g) => {
+        const cur = selRef.current;
+        if (!cur) return;
+        const p = hitTest(e.nativeEvent.locationX + (which === 'anchor' ? handles?.a.x ?? 0 : handles?.b.x ?? 0), 0);
+        // 用「手柄原位 + 位移」算目标点更可靠
+        const base = which === 'anchor' ? handles?.a : handles?.b;
+        if (!base) return;
+        const target = hitTest(base.x + g.dx, base.y + g.dy);
+        void p;
+        if (which === 'anchor') {
+          const f = cur.focus;
+          const before =
+            target.line < f.line || (target.line === f.line && target.ch <= f.ch);
+          setSel(before ? { anchor: target, focus: f } : { anchor: f, focus: target });
+        } else {
+          const a = cur.anchor;
+          const after =
+            target.line > a.line || (target.line === a.line && target.ch >= a.ch);
+          setSel(after ? { anchor: a, focus: target } : { anchor: target, focus: a });
+        }
+      },
+      onPanResponderRelease: () => setDragging(false),
+      onPanResponderTerminate: () => setDragging(false),
+    });
+
+  const anchorResponder = useMemo(
+    () => makeHandleResponder('anchor')(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [handles, lines, lineH, padTop, padH, fontSize]
+  );
+  const focusResponder = useMemo(
+    () => makeHandleResponder('focus')(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [handles, lines, lineH, padTop, padH, fontSize]
+  );
+
   const hasSelection = selectedText.trim().length > 0;
+
+  /* ---------- 浮动菜单位置：选区上方，放不下就放下面 ---------- */
+  const menuPos = useMemo(() => {
+    if (!highlights.length) return null;
+    const first = highlights[0];
+    const last = highlights[highlights.length - 1];
+    const MENU_H = 44;
+    const above = first.top - MENU_H - 10;
+    const top = above > 10 ? above : last.top + lineH + 10;
+    const cx = first.left + first.w / 2;
+    const left = Math.min(Math.max(8, cx - 70), width - 148);
+    return { top, left };
+  }, [highlights, lineH, width]);
 
   return (
     <View style={{ width, height, backgroundColor: bg }}>
-      {/* 正文：逐行渲染，这样才能精确拿到每行的 y */}
-      <View style={{ flex: 1 }} {...responder.panHandlers}>
-        <View style={{ paddingTop: padTop, paddingBottom: padBottom, paddingHorizontal: padH }}>
+      {/* 正文：逐行渲染，行坐标才确定 */}
+      <View style={{ flex: 1 }} {...bodyResponder.panHandlers}>
+        <View
+          style={{ paddingTop: padTop, paddingBottom: padBottom, paddingHorizontal: padH }}
+        >
           {lines.map((line, i) => (
             <Text
               key={`ln-${i}`}
               numberOfLines={1}
               ellipsizeMode="clip"
-              style={{
-                fontSize,
-                lineHeight: lineH,
-                height: lineH,
-                color,
-              }}
+              style={{ fontSize, lineHeight: lineH, height: lineH, color }}
             >
               {line || ' '}
             </Text>
@@ -213,7 +262,7 @@ export function SelectablePage(props: Props) {
         </View>
       </View>
 
-      {/* 选区高亮：画在文字上面一层，半透明蓝 */}
+      {/* 高亮 */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         {highlights.map((h) => (
           <View
@@ -224,71 +273,105 @@ export function SelectablePage(props: Props) {
               left: h.left,
               width: h.w,
               height: lineH,
-              backgroundColor: 'rgba(0,122,255,0.28)',
+              backgroundColor: 'rgba(10,132,255,0.26)',
             }}
           />
         ))}
       </View>
 
-      {/* 选中后浮出的动作条 */}
-      {hasSelection && !dragging ? (
-        <View style={styles.actions} pointerEvents="box-none">
-          <Text style={styles.count} numberOfLines={1}>
-            已选 {selectedText.trim().length} 字
-          </Text>
-          <View style={{ flexDirection: 'row' }}>
-            <ActionBtn label="净化" onPress={() => onAction(selectedText.trim(), 'filter')} />
-            <ActionBtn label="复制" onPress={() => onAction(selectedText.trim(), 'copy')} />
-            <ActionBtn label="取消" onPress={() => setSel(null)} ghost />
-          </View>
+      {/* 两端手柄：拖它精调起止 */}
+      {handles ? (
+        <>
+          <Handle x={handles.a.x} y={handles.a.y} lineH={lineH} responder={anchorResponder} />
+          <Handle x={handles.b.x} y={handles.b.y} lineH={lineH} responder={focusResponder} />
+        </>
+      ) : null}
+
+      {/* 菜单：净化 / 替换 */}
+      {hasSelection && !dragging && menuPos ? (
+        <View style={[styles.menu, { top: menuPos.top, left: menuPos.left }]}>
+          <MenuBtn label="净化" onPress={() => onAction(selectedText.trim(), 'filter')} />
+          <View style={styles.divider} />
+          <MenuBtn label="替换" onPress={() => onAction(selectedText.trim(), 'replace')} />
         </View>
       ) : null}
     </View>
   );
 }
 
-function ActionBtn({
-  label,
-  onPress,
-  ghost,
+/** 选区端点手柄：一个圆点 + 一条竖线 */
+function Handle({
+  x,
+  y,
+  lineH,
+  responder,
 }: {
-  label: string;
-  onPress: () => void;
-  ghost?: boolean;
+  x: number;
+  y: number;
+  lineH: number;
+  responder: ReturnType<typeof PanResponder.create>;
 }) {
+  return (
+    <View
+      {...responder.panHandlers}
+      hitSlop={{ top: 18, bottom: 18, left: 18, right: 18 }}
+      style={{ position: 'absolute', left: x - 12, top: y, width: 24, height: lineH }}
+    >
+      <View
+        style={{
+          position: 'absolute',
+          left: 11,
+          top: 0,
+          width: 2,
+          height: lineH,
+          backgroundColor: '#0a84ff',
+        }}
+      />
+      <View
+        style={{
+          position: 'absolute',
+          left: 2,
+          top: lineH / 2 - 10,
+          width: 20,
+          height: 20,
+          borderRadius: 10,
+          backgroundColor: '#0a84ff',
+          borderWidth: 2,
+          borderColor: '#fff',
+        }}
+      />
+    </View>
+  );
+}
+
+function MenuBtn({ label, onPress }: { label: string; onPress: () => void }) {
   return (
     <View
       onStartShouldSetResponder={() => true}
       onResponderRelease={onPress}
-      style={[styles.btn, ghost ? styles.btnGhost : styles.btnSolid]}
+      style={styles.menuBtn}
     >
-      <Text style={[styles.btnText, ghost && { color: '#9aa0a6' }]}>{label}</Text>
+      <Text style={styles.menuBtnText}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  actions: {
+  menu: {
     position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 12,
-    backgroundColor: 'rgba(28,28,30,0.96)',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    backgroundColor: '#f2f2f7',
+    borderRadius: 10,
+    paddingHorizontal: 4,
+    height: 44,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
   },
-  count: { color: '#8e8e93', fontSize: 12, flexShrink: 1, marginRight: 10 },
-  btn: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 8,
-    marginLeft: 8,
-  },
-  btnSolid: { backgroundColor: '#0a84ff' },
-  btnGhost: { backgroundColor: 'rgba(255,255,255,0.08)' },
-  btnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  menuBtn: { paddingHorizontal: 20, paddingVertical: 10 },
+  menuBtnText: { color: '#1c1c1e', fontSize: 15, fontWeight: '500' },
+  divider: { width: StyleSheet.hairlineWidth, height: 20, backgroundColor: '#c7c7cc' },
 });

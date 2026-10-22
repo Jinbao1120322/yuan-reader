@@ -1306,34 +1306,51 @@ export function ReaderScreen() {
                     padBottom={PAGE_PAD_BOTTOM + metaFooterH}
                     padH={PAGE_PAD_H}
                     onAction={(sel, action) => {
-                      if (action === 'copy') {
-                        Clipboard.setStringAsync(sel).catch(() => {});
-                        setSelectMode(false);
+                      setSelectMode(false);
+                      const raw = sel.trim();
+                      if (!raw) return;
+                      const pattern = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                      if (action === 'filter') {
+                        // 净化 = 直接删除，不加确认、不弹面板，立刻生效
+                        updateSettings({
+                          replaceRules: [
+                            ...settings.replaceRules,
+                            { pattern, replacement: '', isRegex: false },
+                          ],
+                        });
+                        setReloadTick((t) => t + 1);
                         return;
                       }
-                      // 净化：把选中的字填进过滤面板
-                      setFilterDraft(sel);
+                      // 替换 = 打开面板让用户填替换字
+                      setFilterDraft(raw);
                       setFilterReplace('');
-                      setSelectMode(false);
                       setFilterOpen(true);
                     }}
                   />
-                  <TouchableOpacity
-                    onPress={() => setSelectMode(false)}
+                  {/* 顶部横幅：让用户一眼看出"现在是选择模式" */}
+                  <View
                     style={{
                       position: 'absolute',
-                      right: 14,
-                      top: 10,
-                      paddingHorizontal: 14,
-                      paddingVertical: 7,
-                      borderRadius: 16,
-                      backgroundColor: APP.card,
-                      borderWidth: 1,
-                      borderColor: APP.border,
+                      left: 0,
+                      right: 0,
+                      top: 0,
+                      backgroundColor: 'rgba(28,28,30,0.94)',
+                      paddingVertical: 11,
+                      paddingHorizontal: 16,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
                     }}
                   >
-                    <Text style={{ color: APP.text, fontSize: 13 }}>退出选取</Text>
-                  </TouchableOpacity>
+                    <Text style={{ color: '#fff', fontSize: 13 }}>
+                      选择模式 · 按住并拖动选字
+                    </Text>
+                    <TouchableOpacity onPress={() => setSelectMode(false)}>
+                      <Text style={{ color: '#0a84ff', fontSize: 13, fontWeight: '700' }}>
+                        退出
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ) : null}
               </>
