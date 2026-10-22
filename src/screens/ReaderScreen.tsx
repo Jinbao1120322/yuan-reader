@@ -1305,11 +1305,21 @@ export function ReaderScreen() {
                     padTop={PAGE_PAD_TOP + metaHeaderH}
                     padBottom={PAGE_PAD_BOTTOM + metaFooterH}
                     padH={PAGE_PAD_H}
+                    onExit={() => setSelectMode(false)}
                     onAction={(sel, action) => {
                       setSelectMode(false);
                       const raw = sel.trim();
                       if (!raw) return;
-                      const pattern = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                      /*
+                       * 跨行选中时，选中的文本里带换行符。
+                       * 但原文的换行形式可能是 \n、\r\n，或者两边还夹着缩进空格 ——
+                       * 直接按字面匹配会匹配不到（这就是"选两行净化不掉"的原因）。
+                       * 所以把换行替换成「可选空白 + 换行 + 可选空白」。
+                       */
+                      const pattern = raw
+                        .split('\n')
+                        .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+                        .join('[ \\t]*\\r?\\n[ \\t]*');
                       if (action === 'filter') {
                         // 净化 = 直接删除，不加确认、不弹面板，立刻生效
                         updateSettings({
@@ -1351,27 +1361,7 @@ export function ReaderScreen() {
                       </Text>
                     </TouchableOpacity>
                   </View>
-                  {/* 底部大退出按钮：顶部那个有时会被选择层吃掉触摸，这里双保险 */}
-                  <TouchableOpacity
-                    onPress={() => setSelectMode(false)}
-                    style={{
-                      position: 'absolute',
-                      left: 24,
-                      right: 24,
-                      // 抬到底部工具栏（74pt）之上，否则会被「上一章/目录/设置/下一章」盖住点不到
-                      bottom: insets.bottom + 74 + 10,
-                      paddingVertical: 13,
-                      borderRadius: 12,
-                      backgroundColor: APP.card,
-                      borderWidth: 1,
-                      borderColor: APP.border,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <Text style={{ color: APP.text, fontSize: 15, fontWeight: '600' }}>
-                      ✕ 退出选择
-                    </Text>
-                  </TouchableOpacity>
+
                 </View>
               ) : null}
               </>

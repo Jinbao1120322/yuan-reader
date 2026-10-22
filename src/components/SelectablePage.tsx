@@ -35,6 +35,8 @@ interface Props {
   padH: number;
   /** 净化 = 直接删；替换 = 打开输入框 */
   onAction: (selected: string, action: SelectAction) => void;
+  /** 退出选择模式 */
+  onExit: () => void;
 }
 
 interface Pos {
@@ -84,6 +86,7 @@ export function SelectablePage(props: Props) {
     padBottom,
     padH,
     onAction,
+    onExit,
   } = props;
 
   const lineH = fontSize * lineHeight;
@@ -260,19 +263,6 @@ export function SelectablePage(props: Props) {
 
   const hasSelection = selectedText.trim().length > 0;
 
-  /* ---------- 浮动菜单位置：选区上方，放不下就放下面 ---------- */
-  const menuPos = useMemo(() => {
-    if (!highlights.length) return null;
-    const first = highlights[0];
-    const last = highlights[highlights.length - 1];
-    const MENU_H = 44;
-    const above = first.top - MENU_H - 10;
-    const top = above > 10 ? above : last.top + lineH + 10;
-    const cx = first.left + first.w / 2;
-    const left = Math.min(Math.max(8, cx - 70), width - 148);
-    return { top, left };
-  }, [highlights, lineH, width]);
-
   return (
     <View style={{ width, height, backgroundColor: bg }}>
       {/* 正文：逐行渲染，行坐标才确定 */}
@@ -318,14 +308,33 @@ export function SelectablePage(props: Props) {
         </>
       ) : null}
 
-      {/* 菜单：净化 / 替换 */}
-      {hasSelection && !dragging && menuPos ? (
-        <View style={[styles.menu, { top: menuPos.top, left: menuPos.left }]}>
-          <MenuBtn label="净化" onPress={() => onAction(selectedText.trim(), 'filter')} />
-          <View style={styles.divider} />
-          <MenuBtn label="替换" onPress={() => onAction(selectedText.trim(), 'replace')} />
+      {/*
+       * 底部固定操作条。
+       * 原来用「浮在选区上方」的菜单，但选区靠上时会被顶部导航栏挡住、
+       * 靠下时又被底部工具栏挡住 —— 位置算不完。改成钉死在容器底部，
+       * 永远可见、永远点得到，而且顺带显示选中的内容预览。
+       */}
+      <View style={styles.bottomBar}>
+        <View style={{ flex: 1, marginRight: 8 }}>
+          <Text style={styles.preview} numberOfLines={1}>
+            {hasSelection ? selectedText.trim() : '按住正文拖动选字'}
+          </Text>
+          <Text style={styles.previewSub} numberOfLines={1}>
+            {hasSelection ? `已选 ${selectedText.trim().length} 字` : '选中后可净化或替换'}
+          </Text>
         </View>
-      ) : null}
+        {hasSelection ? (
+          <>
+            <BarBtn
+              label="净化"
+              solid
+              onPress={() => onAction(selectedText.trim(), 'filter')}
+            />
+            <BarBtn label="替换" onPress={() => onAction(selectedText.trim(), 'replace')} />
+          </>
+        ) : null}
+        <BarBtn label="退出" ghost onPress={onExit} />
+      </View>
     </View>
   );
 }
@@ -375,34 +384,55 @@ function Handle({
   );
 }
 
-function MenuBtn({ label, onPress }: { label: string; onPress: () => void }) {
+function BarBtn({
+  label,
+  onPress,
+  solid,
+  ghost,
+}: {
+  label: string;
+  onPress: () => void;
+  solid?: boolean;
+  ghost?: boolean;
+}) {
   return (
     <View
       onStartShouldSetResponder={() => true}
       onResponderRelease={onPress}
-      style={styles.menuBtn}
+      style={[
+        styles.barBtn,
+        solid && styles.barBtnSolid,
+        ghost && styles.barBtnGhost,
+      ]}
     >
-      <Text style={styles.menuBtnText}>{label}</Text>
+      <Text style={[styles.barBtnText, solid && { color: '#fff' }]}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  menu: {
+  bottomBar: {
     position: 'absolute',
+    left: 10,
+    right: 10,
+    bottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f2f2f7',
-    borderRadius: 10,
-    paddingHorizontal: 4,
-    height: 44,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 6,
+    backgroundColor: 'rgba(28,28,30,0.96)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  menuBtn: { paddingHorizontal: 20, paddingVertical: 10 },
-  menuBtnText: { color: '#1c1c1e', fontSize: 15, fontWeight: '500' },
-  divider: { width: StyleSheet.hairlineWidth, height: 20, backgroundColor: '#c7c7cc' },
+  preview: { color: '#fff', fontSize: 13, fontWeight: '500' },
+  previewSub: { color: '#8e8e93', fontSize: 11, marginTop: 2 },
+  barBtn: {
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginLeft: 6,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  barBtnSolid: { backgroundColor: '#0a84ff' },
+  barBtnGhost: { backgroundColor: 'transparent' },
+  barBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
 });
