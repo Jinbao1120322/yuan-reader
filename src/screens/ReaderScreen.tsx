@@ -248,6 +248,8 @@ export function ReaderScreen() {
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
+  // 净化规则变化后用它强制重载当前章（loadContent 的依赖里有它）
+  const [reloadTick, setReloadTick] = useState(0);
 
   // 打开目录时滚到当前正在读的那一章，而不是停在第一章
   useEffect(() => {
@@ -355,10 +357,15 @@ export function ReaderScreen() {
   // 页眉页脚是绝对定位的，绝对定位不认父容器的安全区 padding，
   // 必须自己把安全区高度加上，否则会被状态栏/灵动岛和 home indicator 压住。
   const insets = useSafeAreaInsets();
-  // 页眉页脚已移除（用户 2026-10-21 决定不要电量/进度/章节名），
-  // 正文直接排满整屏，不留任何占位。
-  const metaHeaderH = 0;
-  const metaFooterH = 0;
+  /*
+   * 页眉页脚已移除（用户 2026-10-21 决定不要电量/进度/章节名）。
+   * 但顶部不能顶着状态栏出字 —— 用户要求「从第三行开始」，
+   * 也就是顶部先空两行。底部留白做成可调（settings.bottomGapLines，单位行）。
+   * 这两个值会同时作用于「可排印高度」和「页面内边距」，所以只改这里就够。
+   */
+  const lineH = settings.fontSize * settings.lineHeight;
+  const metaHeaderH = lineH * 1.5; // 顶部留白：一行半（两行太空，一行又贴）
+  const metaFooterH = lineH * Math.max(0, settings.bottomGapLines ?? 0);
 
   // zustand 的持久化是异步的（AsyncStorage）。首帧 shelf 还是空数组，
   // 这时候去找"有没有缓存目录"必然找不到 → 白白重拉一次。
@@ -496,7 +503,8 @@ export function ReaderScreen() {
   // 加载正文
   useEffect(() => {
     let cancel = false;
-    const loadContent = async () => {
+
+  const loadContent = async () => {
       setLoading(true);
       try {
         let text = '';
@@ -544,7 +552,7 @@ export function ReaderScreen() {
       cancel = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, chapters.length]);
+  }, [index, chapters.length, settings.replaceRules, reloadTick, sourceId, bookUrl]);
 
   // 分页（仅非滚动模式）
   // 优先用真实排版量出来的行切页：每页正好填满能放下的行，底部不会留白。
@@ -558,7 +566,8 @@ export function ReaderScreen() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterDraft, setFilterDraft] = useState('');
   const [filterReplace, setFilterReplace] = useState('');
-  const [reloadTick, setReloadTick] = useState(0);
+  // 选取模式：正文换成可选中的 TextInput，直接长按选字来净化
+  const [selectMode, setSelectMode] = useState(false);
 
   const openFilterSheet = useCallback(async () => {
     // 预填剪贴板：用户刚复制的那段文字，省得手打
@@ -808,10 +817,20 @@ export function ReaderScreen() {
   }, [pages, pageIndex, index, bookUrl, sourceId, updateProgress]);
 
   const goPrev = () => {
-    if (index > 0) setIndex(index - 1);
+    if (index > 0) {
+      pendingPageIndex.current = 0;
+      setPageIndex(0);
+      setIndex(index - 1);
+    }
   };
+  // 跳章 = 跳到那一章的**第一页**。只改 index 不改 pageIndex 的话，
+  // 会停在上一章看到一半的页码上（比如第 5 页），看起来就不是"开头"。
   const goNext = () => {
-    if (index < chapters.length - 1) setIndex(index + 1);
+    if (index < chapters.length - 1) {
+      pendingPageIndex.current = 0;
+      setPageIndex(0);
+      setIndex(index + 1);
+    }
   };
 
   // —— 正文缓存 ——
@@ -1034,12 +1053,12 @@ export function ReaderScreen() {
   };
 
   // 底部按钮：直接跳到上一章 / 下一章的开头（不是翻页）
+  // 底部按钮：跳章。**不要收工具栏** —— 收了想再点一次就得重新呼出来，
+  // 连续翻章很别扭。遮挡问题在页脚删掉之后已经不严重。
   const handlePrevChapter = () => {
-    hideBars();
     goPrev();
   };
   const handleNextChapter = () => {
-    hideBars();
     goNext();
   };
 
@@ -1256,6 +1275,77 @@ export function ReaderScreen() {
                 onTapRight={handleNextPage}
                 onTapCenter={toggleBars}
               />
+
+              {/*
+               * 选取模式覆盖层：正文换成可选中文本。
+               * RN 的 Text 拿不到选择事件，只有 TextInput 有 onSelectionChange，
+               * 所以进这个模式时用 TextInput 顶上，选完就自动退出。
+               * editable 必须是 true 才能选中；用 showSoftInputOnFocus={false} 挡住键盘。
+               */}
+              {selectMode ? (
+                <View
+                  style={[
+                    StyleSheet.absoluteFill,
+                    { backgroundColor: theme.bg, zIndex: 30 },
+                  ]}
+                >
+                  <TextInput
+                    multiline
+                    editable
+                    showSoftInputOnFocus={false}
+                    scrollEnabled
+                    value={pages[Math.min(pageIndex, Math.max(0, pages.length - 1))] || ''}
+                    onSelectionChange={(e) => {
+                      const { start, end } = e.nativeEvent.selection;
+                      if (end - start < 1) return;
+                      const sel = (pages[pageIndex] || '').slice(start, end).trim();
+                      if (!sel) return;
+                      setFilterDraft(sel);
+                      setFilterReplace('');
+                      setSelectMode(false);
+                      setFilterOpen(true);
+                    }}
+                    style={{
+                      flex: 1,
+                      color: theme.text,
+                      fontSize: settings.fontSize,
+                      lineHeight: settings.fontSize * settings.lineHeight,
+                      paddingHorizontal: PAGE_PAD_H,
+                      paddingTop: PAGE_PAD_TOP,
+                      paddingBottom: PAGE_PAD_BOTTOM,
+                    }}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setSelectMode(false)}
+                    style={{
+                      position: 'absolute',
+                      right: 14,
+                      top: 10,
+                      paddingHorizontal: 14,
+                      paddingVertical: 7,
+                      borderRadius: 16,
+                      backgroundColor: APP.card,
+                      borderWidth: 1,
+                      borderColor: APP.border,
+                    }}
+                  >
+                    <Text style={{ color: APP.text, fontSize: 13 }}>退出选取</Text>
+                  </TouchableOpacity>
+                  <Text
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      bottom: 14,
+                      textAlign: 'center',
+                      color: APP.sub,
+                      fontSize: 12,
+                    }}
+                  >
+                    长按选中要过滤的文字，选中即弹出过滤面板
+                  </Text>
+                </View>
+              ) : null}
               </>
             ) : (
               <View style={styles.center}>
@@ -1520,17 +1610,6 @@ export function ReaderScreen() {
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity style={styles.switchRow} onPress={toggleShelf}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuLabel}>{onShelf ? '移出书架' : '加入书架'}</Text>
-                <Text style={styles.switchSub} numberOfLines={1}>
-                  {onShelf ? '这本书已经在书架里了' : '把这本书收藏到书架，方便下次接着看'}
-                </Text>
-              </View>
-              <Text style={[styles.switchGo, onShelf && { color: APP.danger }]}>
-                {onShelf ? '移出' : '＋ 添加'}
-              </Text>
-            </TouchableOpacity>
             <View style={styles.row}>
               <Text style={[styles.menuLabel, { marginTop: 10 }]}>字号</Text>
               <View style={styles.stepper}>
@@ -1658,42 +1737,63 @@ export function ReaderScreen() {
                 ))}
               </View>
             </View>
-            {/* 临时诊断：统计换行/空行的个数，判断空行是在哪一层产生的 */}
-            <Text
-              selectable
-              style={{ color: '#777', fontSize: 9, lineHeight: 12, marginTop: 14 }}
-            >
-              {`[原文] 换行${((content || '').match(/\n/g) || []).length} 空行${
-                ((content || '').match(/\n[ \t\u3000]*\n/g) || []).length
-              }`}
-              {'\n'}
-              {`[排版] 换行${(displayText.match(/\n/g) || []).length} 空行${
-                (displayText.match(/\n[ \t\u3000]*\n/g) || []).length
-              }`}
-              {'\n'}
-              {`[位图] 已截${Object.keys(pageImages).length}张`}
-              {'\n'}
-              {`[本页] 换行${
-                ((pages[Math.min(pageIndex, Math.max(0, pages.length - 1))] || '').match(
-                  /\n/g
-                ) || []).length
-              } 空行${
-                ((pages[Math.min(pageIndex, Math.max(0, pages.length - 1))] || '').match(
-                  /\n[ \t\u3000]*\n/g
-                ) || []).length
-              }`}
-            </Text>
-
+            <View style={styles.row}>
+              <Text style={styles.menuLabel}>底部留白</Text>
+              <View style={styles.stepper}>
+                <TouchableOpacity
+                  style={styles.step}
+                  onPress={() =>
+                    updateSettings({
+                      bottomGapLines: Math.max(0, (settings.bottomGapLines ?? 0) - 1),
+                    })
+                  }
+                >
+                  <Text style={styles.stepText}>－</Text>
+                </TouchableOpacity>
+                <Text style={[styles.menuVal, { color: APP.text }]}>
+                  {settings.bottomGapLines ?? 0} 行
+                </Text>
+                <TouchableOpacity
+                  style={styles.step}
+                  onPress={() =>
+                    updateSettings({
+                      bottomGapLines: Math.min(5, (settings.bottomGapLines ?? 0) + 1),
+                    })
+                  }
+                >
+                  <Text style={styles.stepText}>＋</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
             <View style={styles.row}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.menuLabel}>过滤文字</Text>
                 <Text style={styles.switchSub} numberOfLines={1}>
-                  长按正文也能打开 · 已有 {settings.replaceRules.length} 条规则
+                  已有 {settings.replaceRules.length} 条规则 · 也可在下方开启选取净化
                 </Text>
               </View>
               <TouchableOpacity onPress={openFilterSheet}>
                 <Text style={{ color: APP.accent, fontSize: 13, fontWeight: '700' }}>
                   添加
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.menuLabel}>选取净化</Text>
+                <Text style={styles.switchSub} numberOfLines={1}>
+                  正文变可选，长按选中文字直接加过滤
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setMenuOpen(false);
+                  setTimeout(() => setSelectMode(true), 220);
+                }}
+              >
+                <Text style={{ color: APP.accent, fontSize: 13, fontWeight: '700' }}>
+                  开始
                 </Text>
               </TouchableOpacity>
             </View>
