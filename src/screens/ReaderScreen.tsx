@@ -1351,6 +1351,26 @@ export function ReaderScreen() {
                       </Text>
                     </TouchableOpacity>
                   </View>
+                  {/* 底部大退出按钮：顶部那个有时会被选择层吃掉触摸，这里双保险 */}
+                  <TouchableOpacity
+                    onPress={() => setSelectMode(false)}
+                    style={{
+                      position: 'absolute',
+                      left: 24,
+                      right: 24,
+                      bottom: Math.max(14, insets.bottom + 6),
+                      paddingVertical: 13,
+                      borderRadius: 12,
+                      backgroundColor: APP.card,
+                      borderWidth: 1,
+                      borderColor: APP.border,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ color: APP.text, fontSize: 15, fontWeight: '600' }}>
+                      ✕ 退出选择
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               ) : null}
               </>

@@ -191,25 +191,32 @@ export function SelectablePage(props: Props) {
       onMoveShouldSetPanResponder: () => true,
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => setDragging(true),
-      onPanResponderMove: (e, g) => {
+      onPanResponderMove: (_e, g) => {
         const cur = selRef.current;
         if (!cur) return;
-        const p = hitTest(e.nativeEvent.locationX + (which === 'anchor' ? handles?.a.x ?? 0 : handles?.b.x ?? 0), 0);
-        // 用「手柄原位 + 位移」算目标点更可靠
+        // 目标点 = 手柄**原始位置** + 手指位移（locationX 是相对手柄的，不能用）
         const base = which === 'anchor' ? handles?.a : handles?.b;
         if (!base) return;
-        const target = hitTest(base.x + g.dx, base.y + g.dy);
-        void p;
+        let target = hitTest(base.x + g.dx, base.y + g.dy);
+
+        /*
+         * 钳制（clamp）：起点不能越过终点，终点不能越过起点。
+         * 之前写的是「越过了就交换」，交换之后手柄的身份变了 ——
+         * 用户手里拖着的这个手柄突然变成另一端，再拖就完全是反的，
+         * 感觉就是「动不了 / 只能重头来」。系统选择也是 clamp，不交换。
+         */
         if (which === 'anchor') {
           const f = cur.focus;
-          const before =
-            target.line < f.line || (target.line === f.line && target.ch <= f.ch);
-          setSel(before ? { anchor: target, focus: f } : { anchor: f, focus: target });
+          if (target.line > f.line || (target.line === f.line && target.ch > f.ch)) {
+            target = { ...f };
+          }
+          setSel({ anchor: target, focus: f });
         } else {
           const a = cur.anchor;
-          const after =
-            target.line > a.line || (target.line === a.line && target.ch >= a.ch);
-          setSel(after ? { anchor: a, focus: target } : { anchor: target, focus: a });
+          if (target.line < a.line || (target.line === a.line && target.ch < a.ch)) {
+            target = { ...a };
+          }
+          setSel({ anchor: a, focus: target });
         }
       },
       onPanResponderRelease: () => setDragging(false),
