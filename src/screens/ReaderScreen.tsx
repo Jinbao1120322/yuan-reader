@@ -939,12 +939,21 @@ export function ReaderScreen() {
   const startCache = (count: number) => {
     if (cacheJob) return;
     if (!chapters.length) return;
-    const n = count < 0 ? chapters.length : Math.min(chapters.length, count);
+    /*
+     * **从当前章开始往后数**，不是从第 1 章开始。
+     * 之前 `for (i = 0; i < total; i++)` 是从头数，用户读到第 300 章点「50 章」，
+     * 缓存的却是第 1~50 章，完全没用。
+     */
+    const from = Math.min(index, chapters.length - 1);
+    const n =
+      count < 0
+        ? chapters.length - from
+        : Math.min(chapters.length - from, count);
     // 几百章要跑挺久，先说清楚，别让人以为卡住了
     if (n > 200) {
       Alert.alert(
         '缓存章节',
-        `将缓存 ${n} 章，需要一段时间，期间请保持 App 在前台，可以随时取消。`,
+        `将从第 ${from + 1} 章开始，往后缓存 ${n} 章（到第 ${from + n} 章），需要一段时间，期间请保持 App 在前台，可以随时取消。`,
         [
           { text: '取消', style: 'cancel' },
           { text: '开始', onPress: () => runCache(count) },
@@ -958,13 +967,19 @@ export function ReaderScreen() {
   const runCache = async (count: number) => {
     const src = sources.find((s) => s.bookSourceUrl === sourceId);
     if (!src || !chapters.length) return;
-    const total = count < 0 ? chapters.length : Math.min(chapters.length, count);
+    // 从当前阅读的章节开始往后缓存
+    const from = Math.min(index, chapters.length - 1);
+    const end =
+      count < 0
+        ? chapters.length
+        : Math.min(chapters.length, from + count);
+    const total = end - from;
     cacheCancelRef.current = false;
     setCacheJob({ done: 0, total });
     let done = 0;
     let failed = 0;
     let skipped = 0;
-    for (let i = 0; i < total; i++) {
+    for (let i = from; i < end; i++) {
       if (cacheCancelRef.current) break;
       if (await hasChapter(currentKey, i)) {
         skipped++;
@@ -977,13 +992,13 @@ export function ReaderScreen() {
           failed++;        // 之前这里是静默跳过，用户完全不知道有漏
         }
       }
-      done = i + 1;
+      done = i - from + 1;
       setCacheJob({ done, total });
     }
     setCacheJob(null);
     refreshCachedCount();
     const msg =
-      `共 ${done} 章：本次新缓存 ${done - skipped - failed} 章，` +
+      `第 ${from + 1} 章起共 ${done} 章：本次新缓存 ${done - skipped - failed} 章，` +
       `已有 ${skipped} 章，失败 ${failed} 章。` +
       (failed ? '\n\n失败的章再点一次「缓存」就能补上。' : '\n\n之后读这些章不用再联网。');
     Alert.alert(cacheCancelRef.current ? '已取消' : '缓存完成', msg);
