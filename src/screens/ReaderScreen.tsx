@@ -402,6 +402,13 @@ export function ReaderScreen() {
    * page = -1 表示"目标章最后一页"。
    */
   const navTarget = useRef<{ ch: number; page: number } | null>(null);
+  /*
+   * 当前 pages 数组对应的章节号。
+   * 只有它等于目标章，才能把页码套用上去 ——
+   * 光判断 `t.ch === index` 不够：setIndex 之后 index 立刻变了，
+   * 但正文还在加载，pages 仍是**上一章**的，页码会被套到错的章上。
+   */
+  const loadedChRef = useRef<number>(-1);
   // 滚动模式：保存的阅读进度是 0~1000 的百分比，首次进入时恢复到该位置
   const scrollRestoreFrac = useRef<number | null>(
     isPaged ? null : Math.min((routePageIndex || 0) / 1000, 1)
@@ -550,6 +557,8 @@ export function ReaderScreen() {
         }
         if (!cancel) {
           setContent(text || '（本章内容为空）');
+          // 记录「当前正文属于哪一章」，供跳页意图判断是否已就绪
+          loadedChRef.current = index;
           // 注意：不要在此把进度清零，否则会覆盖已保存的页码/滚动位置。
           // 分页模式的进度由下方 pages 定位逻辑统一持久化；滚动模式由 onMomentumScrollEnd 处理。
           scrollRef.current?.scrollTo({ y: 0, animated: false });
@@ -834,8 +843,8 @@ export function ReaderScreen() {
   useEffect(() => {
     const t = navTarget.current;
     if (!t || !pages.length) return;
-    // 章节还没切到目标章 → 这次 pages 是别的章的，等下一次
-    if (t.ch !== index) return;
+    // pages 还不是目标章的（正文还在加载）→ 等下一次
+    if (t.ch !== loadedChRef.current) return;
     navTarget.current = null;
     const want = t.page === -1 ? pages.length - 1 : t.page;
     const pos = Math.min(Math.max(want, 0), Math.max(0, pages.length - 1));
@@ -907,6 +916,26 @@ export function ReaderScreen() {
   } | null>(null);
   const cacheCancelRef = useRef(false);
 
+  /* 已缓存章数：给用户一个能自查的实数，不再靠"我记得缓存过" */
+  const [cachedCount, setCachedCount] = useState<number | null>(null);
+
+  const refreshCachedCount = useCallback(async () => {
+    if (!chapters.length) {
+      setCachedCount(null);
+      return;
+    }
+    try {
+      const n = await countCached(currentKey, chapters.length);
+      setCachedCount(n);
+    } catch {
+      setCachedCount(null);
+    }
+  }, [currentKey, chapters.length]);
+
+  useEffect(() => {
+    refreshCachedCount();
+  }, [refreshCachedCount]);
+
   const startCache = (count: number) => {
     if (cacheJob) return;
     if (!chapters.length) return;
@@ -933,24 +962,31 @@ export function ReaderScreen() {
     cacheCancelRef.current = false;
     setCacheJob({ done: 0, total });
     let done = 0;
+    let failed = 0;
+    let skipped = 0;
     for (let i = 0; i < total; i++) {
       if (cacheCancelRef.current) break;
-      if (!(await hasChapter(currentKey, i))) {
+      if (await hasChapter(currentKey, i)) {
+        skipped++;
+      } else {
         try {
           const r = await getContent(src, chapters[i].url);
           if (r.content) await saveChapter(currentKey, i, r.content);
+          else failed++;   // 抓回来是空的，也算失败，不能当成功
         } catch {
-          /* 单章失败跳过 */
+          failed++;        // 之前这里是静默跳过，用户完全不知道有漏
         }
       }
       done = i + 1;
       setCacheJob({ done, total });
     }
     setCacheJob(null);
-    Alert.alert(
-      cacheCancelRef.current ? '已取消' : '缓存完成',
-      `本次处理 ${done} 章。之后读这些章不用再联网。`
-    );
+    refreshCachedCount();
+    const msg =
+      `共 ${done} 章：本次新缓存 ${done - skipped - failed} 章，` +
+      `已有 ${skipped} 章，失败 ${failed} 章。` +
+      (failed ? '\n\n失败的章再点一次「缓存」就能补上。' : '\n\n之后读这些章不用再联网。');
+    Alert.alert(cacheCancelRef.current ? '已取消' : '缓存完成', msg);
   };
 
   const clearCache = () => {
@@ -1042,20 +1078,6 @@ export function ReaderScreen() {
       flushProgress();
     }, 350);
   };
-  /*
-   * 章内翻页也要落盘。
-   * 之前 savePageProgress 只在「换章」的几条路径里调用，**章内翻页从来没存过**，
-   * 于是书架里的 lastReadPos 一直是 0，恢复逻辑的「> 0」判断根本不成立
-   * → 表现就是「退到书架再进来永远回到本章第一页」。
-   */
-  useEffect(() => {
-    if (!pages.length || !restoredRef.current) return;
-    // 还有待执行的跳页意图时先别存，等它落位后再存，免得把旧页码顶掉
-    if (navTarget.current) return;
-    savePageProgress(pageIndex);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageIndex, pages]);
-
   useEffect(() => () => flushProgress(), []);
   useEffect(() => {
     // 换章时把上一章的进度补写掉，别丢
@@ -1409,8 +1431,11 @@ export function ReaderScreen() {
                       position: 'absolute',
                       left: 0,
                       right: 0,
-                      top: 0,
+                      // 不能 top:0 —— 那样会落到状态栏区域里，被系统拦掉点不到
+                      top: insets.top + 6,
                       backgroundColor: 'rgba(28,28,30,0.94)',
+                      borderRadius: 10,
+                      marginHorizontal: 10,
                       paddingVertical: 11,
                       paddingHorizontal: 16,
                       flexDirection: 'row',
@@ -1642,6 +1667,25 @@ export function ReaderScreen() {
               </View>
               <Text style={styles.switchGo}>切换</Text>
             </TouchableOpacity>
+
+            {/* 缓存状态：给个能自查的实数，不用靠"我记得缓存过" */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 6,
+              }}
+            >
+              <Text style={styles.menuLabel}>缓存正文</Text>
+              <Text style={[styles.switchSub, { textAlign: 'right' }]}>
+                {cacheJob
+                  ? `缓存中 ${cacheJob.done} / ${cacheJob.total}`
+                  : cachedCount == null
+                  ? '—'
+                  : `已缓存 ${cachedCount} / ${chapters.length} 章`}
+              </Text>
+            </View>
 
                         <View style={styles.cacheRow}>
               {[
