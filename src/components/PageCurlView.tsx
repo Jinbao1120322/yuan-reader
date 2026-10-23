@@ -431,21 +431,41 @@ export function PageCurlView(props: Props) {
     // 轻点必须单独用 Tap 手势：Pan 需要手指移动才会激活，
     // 纯点击（不移动）Pan 根本不会触发 onEnd —— 换到 Reanimated 之后
     // 「点屏幕中间收/开工具栏」就失灵了，工具栏一直挂着关不掉。
+    /*
+     * 点击区域：屏幕按 3×3 等分成九宫格。
+     *
+     *   ┌────┬────┬────┐
+     *   │上一页│设置 │下一页│      row 0
+     *   ├────┼────┼────┤
+     *   │上一页│设置 │下一页│      row 1
+     *   ├────┼────┼────┤
+     *   │下一页│下一页│下一页│      row 2
+     *   └────┴────┴────┘
+     *
+     * 也就是：左列上两格 = 上一页；中列上两格 = 设置；其余（右列 + 整排底部）= 下一页。
+     */
     const tap = Gesture.Tap()
       .maxDistance(14)
       .onEnd((e) => {
         'worklet';
         if (animatingSV.value) return;
-        const x = e.x;
-        if (x < AW * 0.33) {
+        const col = Math.min(2, Math.max(0, Math.floor((e.x / AW) * 3)));
+        const row = Math.min(2, Math.max(0, Math.floor((e.y / AH) * 3)));
+
+        if (col === 0 && (row === 0 || row === 1)) {
+          // 左上、中左 → 上一页
           if (canPrev) flip('prev');
           else runOnJS(doTapLeft)();
-        } else if (x > AW * 0.67) {
-          if (canNext) flip('next');
-          else runOnJS(doTapRight)();
-        } else {
-          runOnJS(doTapCenter)();
+          return;
         }
+        if (col === 1 && (row === 0 || row === 1)) {
+          // 中上、正中 → 呼出设置
+          runOnJS(doTapCenter)();
+          return;
+        }
+        // 右上、中右、以及整排底部 → 下一页
+        if (canNext) flip('next');
+        else runOnJS(doTapRight)();
       });
 
     const pan = Gesture.Pan()

@@ -1042,6 +1042,20 @@ export function ReaderScreen() {
       flushProgress();
     }, 350);
   };
+  /*
+   * 章内翻页也要落盘。
+   * 之前 savePageProgress 只在「换章」的几条路径里调用，**章内翻页从来没存过**，
+   * 于是书架里的 lastReadPos 一直是 0，恢复逻辑的「> 0」判断根本不成立
+   * → 表现就是「退到书架再进来永远回到本章第一页」。
+   */
+  useEffect(() => {
+    if (!pages.length || !restoredRef.current) return;
+    // 还有待执行的跳页意图时先别存，等它落位后再存，免得把旧页码顶掉
+    if (navTarget.current) return;
+    savePageProgress(pageIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageIndex, pages]);
+
   useEffect(() => () => flushProgress(), []);
   useEffect(() => {
     // 换章时把上一章的进度补写掉，别丢
@@ -1404,14 +1418,18 @@ export function ReaderScreen() {
                       justifyContent: 'space-between',
                     }}
                   >
-                    <Text style={{ color: '#fff', fontSize: 13 }}>
-                      选择模式 · 按住并拖动选字
-                    </Text>
-                    <TouchableOpacity onPress={() => setSelectMode(false)}>
-                      <Text style={{ color: '#0a84ff', fontSize: 13, fontWeight: '700' }}>
-                        退出
+                    <TouchableOpacity
+                      onPress={() => setSelectMode(false)}
+                      hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                      style={{ paddingVertical: 4, paddingRight: 18 }}
+                    >
+                      <Text style={{ color: '#0a84ff', fontSize: 15, fontWeight: '700' }}>
+                        ‹ 退出
                       </Text>
                     </TouchableOpacity>
+                    <Text style={{ color: '#fff', fontSize: 12, flexShrink: 1 }}>
+                      按住并拖动选字
+                    </Text>
                   </View>
 
                 </View>
